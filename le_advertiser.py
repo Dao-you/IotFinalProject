@@ -1,3 +1,8 @@
+from bluez_venv import enable_system_dbus_path
+
+
+enable_system_dbus_path()
+
 from bluezero import broadcaster
 from bluezero import adapter
 import time

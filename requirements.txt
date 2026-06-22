@@ -1,9 +1,8 @@
-# ------------------------------
-# opencv-python / cv2
-# mediapipe
-# gpiozero
-# lgpio
-# ------------------------------
-
-
-pip install mediapipe gpiozero lgpio
+# Raspberry Pi OS packages needed by bluezero:
+# sudo apt install python3-dbus python3-gi
+opencv-python
+mediapipe
+gpiozero
+lgpio
+bleak
+bluezero

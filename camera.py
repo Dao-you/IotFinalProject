@@ -187,7 +187,11 @@ class YaGestureDetector:
         self.hands.close()
 
 
-def main():
+def run_camera_session(
+    stop_after_capture=True,
+    session_timeout=None,
+    show_preview=True
+):
     MOTOR_PINS = [17, 27, 22, 23]
 
     FRAME_WIDTH = 320
@@ -215,8 +219,17 @@ def main():
         motor.cleanup()
         raise RuntimeError("Cannot open USB camera")
 
+    session_started_at = time.time()
+    captured_any_photo = False
+
     try:
         while True:
+            if session_timeout is not None:
+                elapsed = time.time() - session_started_at
+                if elapsed >= session_timeout:
+                    print("Camera session timeout")
+                    break
+
             ret, frame = cap.read()
 
             if not ret or frame is None:
@@ -230,6 +243,8 @@ def main():
 
             is_ya = ya_detector.process(frame)
             captured, status_text = ya_detector.update_capture_state(frame, is_ya)
+            if captured:
+                captured_any_photo = True
 
             cv2.line(
                 frame,
@@ -264,10 +279,14 @@ def main():
                 1
             )
 
-            display_frame = cv2.resize(frame, (960, 720))
-            cv2.imshow("Face Tracking + YA Countdown", display_frame)
+            if show_preview:
+                display_frame = cv2.resize(frame, (960, 720))
+                cv2.imshow("Face Tracking + YA Countdown", display_frame)
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+            if captured and stop_after_capture:
                 break
 
     finally:
@@ -275,6 +294,12 @@ def main():
         ya_detector.close()
         cap.release()
         cv2.destroyAllWindows()
+
+    return captured_any_photo
+
+
+def main():
+    run_camera_session(stop_after_capture=False)
 
 
 if __name__ == "__main__":
