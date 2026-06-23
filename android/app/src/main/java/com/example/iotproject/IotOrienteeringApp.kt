@@ -140,6 +140,18 @@ fun IotOrienteeringApp(
         selectedCheckpointId = checkpoint.id
     }
 
+    fun updateCheckpointBeaconData(checkpointId: String, beaconDataHex: String) {
+        val cleanBeaconData = normalizeBeaconHex(beaconDataHex)
+        if (cleanBeaconData.isBlank()) {
+            return
+        }
+
+        val index = checkpoints.indexOfFirst { it.id == checkpointId }
+        if (index >= 0) {
+            checkpoints[index] = checkpoints[index].copy(beaconDataHex = cleanBeaconData)
+        }
+    }
+
     Scaffold(containerColor = AppBackground) { innerPadding ->
         Column(
             modifier = Modifier
@@ -174,6 +186,7 @@ fun IotOrienteeringApp(
                     onSelectCheckpoint = { selectedCheckpointId = it },
                     onMoveCheckpoint = ::moveCheckpoint,
                     onAddCheckpoint = ::addCheckpoint,
+                    onUpdateCheckpointBeaconData = ::updateCheckpointBeaconData,
                 )
             }
         }
@@ -281,9 +294,16 @@ private fun AdminScreen(
     onSelectCheckpoint: (String) -> Unit,
     onMoveCheckpoint: (String, MapPoint) -> Unit,
     onAddCheckpoint: (String, String) -> Unit,
+    onUpdateCheckpointBeaconData: (String, String) -> Unit,
 ) {
     var newCheckpointName by remember { mutableStateOf("") }
     var newBeaconDataHex by remember { mutableStateOf(DEFAULT_BEACON_DATA_HEX) }
+    val selectedCheckpoint = checkpoints.firstOrNull { it.id == selectedCheckpointId }
+    var editedBeaconDataHex by remember { mutableStateOf("") }
+
+    LaunchedEffect(selectedCheckpoint?.id, selectedCheckpoint?.beaconDataHex) {
+        editedBeaconDataHex = selectedCheckpoint?.beaconDataHex.orEmpty()
+    }
 
     Column(
         modifier = Modifier
@@ -345,6 +365,20 @@ private fun AdminScreen(
                     Text("新增檢核點")
                 }
 
+                SelectedCheckpointEditor(
+                    checkpoint = selectedCheckpoint,
+                    editedBeaconDataHex = editedBeaconDataHex,
+                    onBeaconDataChange = { editedBeaconDataHex = normalizeBeaconHex(it) },
+                    onApplyBeaconData = {
+                        if (selectedCheckpoint != null) {
+                            onUpdateCheckpointBeaconData(
+                                selectedCheckpoint.id,
+                                editedBeaconDataHex,
+                            )
+                        }
+                    },
+                )
+
                 Column(
                     modifier = Modifier
                         .heightIn(max = 150.dp)
@@ -358,6 +392,56 @@ private fun AdminScreen(
                             onClick = { onSelectCheckpoint(checkpoint.id) },
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectedCheckpointEditor(
+    checkpoint: Checkpoint?,
+    editedBeaconDataHex: String,
+    onBeaconDataChange: (String) -> Unit,
+    onApplyBeaconData: () -> Unit,
+) {
+    Surface(
+        color = Color(0xFFF6F8F8),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = checkpoint?.let { "編輯 ${it.name}" } ?: "選取檢核點後可編輯 Beacon Data",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = editedBeaconDataHex,
+                    onValueChange = onBeaconDataChange,
+                    label = { Text("Beacon Data") },
+                    singleLine = true,
+                    enabled = checkpoint != null,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = onApplyBeaconData,
+                    enabled = checkpoint != null &&
+                        editedBeaconDataHex.isNotBlank() &&
+                        editedBeaconDataHex != checkpoint.beaconDataHex,
+                ) {
+                    Text("套用")
                 }
             }
         }

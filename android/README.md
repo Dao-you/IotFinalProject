@@ -12,6 +12,7 @@
 - 管理介面：
   - 新增檢核點名稱與 `Beacon Data`。
   - 選取檢核點後，可在地圖上放置或拖曳圖釘。
+  - 選取檢核點後，可修改該檢核點的 `Beacon Data`。
   - 目前資料保存在 App runtime state，重啟 App 後會回到預設檢核點。
 
 ## Beacon 設定
@@ -53,4 +54,3 @@ Windows PowerShell 可執行：
 - 決定正式 beacon payload 格式，讓 App 可以區分不同 Raspberry Pi 檢核點。
 - 加入正式地圖圖片或可縮放平面圖。
 - 串接遊戲關卡狀態、任務提示與完成紀錄。
-
