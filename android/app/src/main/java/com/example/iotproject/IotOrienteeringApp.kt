@@ -1,6 +1,10 @@
 package com.example.iotproject
 
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.SystemClock
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,15 +13,14 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,9 +51,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +79,13 @@ private val PinIdle = Color(0xFF3C596B)
 private val PinActive = Color(0xFF13A36F)
 private val PinSelected = Color(0xFF2D6CDF)
 private val WarningBackground = Color(0xFFFFF3CF)
+
+private data class MapBackgroundImage(
+    val uri: Uri? = null,
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f,
+    val scale: Float = 1f,
+)
 
 private enum class AppScreen(val title: String) {
     Game("遊戲"),
@@ -110,6 +124,7 @@ fun IotOrienteeringApp(
         )
     }
     var selectedCheckpointId by remember { mutableStateOf(checkpoints.firstOrNull()?.id) }
+    var mapBackgroundImage by remember { mutableStateOf(MapBackgroundImage()) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -152,6 +167,29 @@ fun IotOrienteeringApp(
         }
     }
 
+    fun setMapBackgroundImage(uri: Uri) {
+        mapBackgroundImage = MapBackgroundImage(uri = uri)
+    }
+
+    fun moveMapBackgroundImage(deltaX: Float, deltaY: Float) {
+        mapBackgroundImage = mapBackgroundImage.copy(
+            offsetX = (mapBackgroundImage.offsetX + deltaX).coerceIn(-1f, 1f),
+            offsetY = (mapBackgroundImage.offsetY + deltaY).coerceIn(-1f, 1f),
+        )
+    }
+
+    fun setMapBackgroundScale(scale: Float) {
+        mapBackgroundImage = mapBackgroundImage.copy(scale = scale.coerceIn(0.4f, 3f))
+    }
+
+    fun resetMapBackgroundPlacement() {
+        mapBackgroundImage = mapBackgroundImage.copy(
+            offsetX = 0f,
+            offsetY = 0f,
+            scale = 1f,
+        )
+    }
+
     Scaffold(containerColor = AppBackground) { innerPadding ->
         Column(
             modifier = Modifier
@@ -174,6 +212,7 @@ fun IotOrienteeringApp(
                     checkpoints = checkpoints,
                     beaconSignals = beaconSignals,
                     nowElapsedRealtime = nowElapsedRealtime,
+                    mapBackgroundImage = mapBackgroundImage,
                     hasBlePermission = hasBlePermission,
                     onRequestBlePermission = onRequestBlePermission,
                 )
@@ -182,11 +221,16 @@ fun IotOrienteeringApp(
                     checkpoints = checkpoints,
                     beaconSignals = beaconSignals,
                     nowElapsedRealtime = nowElapsedRealtime,
+                    mapBackgroundImage = mapBackgroundImage,
                     selectedCheckpointId = selectedCheckpointId,
                     onSelectCheckpoint = { selectedCheckpointId = it },
                     onMoveCheckpoint = ::moveCheckpoint,
                     onAddCheckpoint = ::addCheckpoint,
                     onUpdateCheckpointBeaconData = ::updateCheckpointBeaconData,
+                    onMapBackgroundSelected = ::setMapBackgroundImage,
+                    onMoveMapBackground = ::moveMapBackgroundImage,
+                    onSetMapBackgroundScale = ::setMapBackgroundScale,
+                    onResetMapBackgroundPlacement = ::resetMapBackgroundPlacement,
                 )
             }
         }
@@ -226,14 +270,16 @@ private fun GameScreen(
     checkpoints: List<Checkpoint>,
     beaconSignals: Map<String, BeaconSignal>,
     nowElapsedRealtime: Long,
+    mapBackgroundImage: MapBackgroundImage,
     hasBlePermission: Boolean,
     onRequestBlePermission: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (!hasBlePermission) {
             PermissionBanner(onRequestBlePermission = onRequestBlePermission)
@@ -243,13 +289,17 @@ private fun GameScreen(
             checkpoints = checkpoints,
             beaconSignals = beaconSignals,
             nowElapsedRealtime = nowElapsedRealtime,
+            mapBackgroundImage = mapBackgroundImage,
             selectedCheckpointId = null,
             editable = false,
+            adjustingMapBackground = false,
             onSelectCheckpoint = {},
             onMoveCheckpoint = { _, _ -> },
+            onMoveMapBackground = { _, _ -> },
             modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .widthIn(max = 520.dp)
                 .fillMaxWidth()
-                .weight(1f),
         )
 
         CheckpointSignalList(
@@ -290,16 +340,22 @@ private fun AdminScreen(
     checkpoints: List<Checkpoint>,
     beaconSignals: Map<String, BeaconSignal>,
     nowElapsedRealtime: Long,
+    mapBackgroundImage: MapBackgroundImage,
     selectedCheckpointId: String?,
     onSelectCheckpoint: (String) -> Unit,
     onMoveCheckpoint: (String, MapPoint) -> Unit,
     onAddCheckpoint: (String, String) -> Unit,
     onUpdateCheckpointBeaconData: (String, String) -> Unit,
+    onMapBackgroundSelected: (Uri) -> Unit,
+    onMoveMapBackground: (Float, Float) -> Unit,
+    onSetMapBackgroundScale: (Float) -> Unit,
+    onResetMapBackgroundPlacement: () -> Unit,
 ) {
     var newCheckpointName by remember { mutableStateOf("") }
     var newBeaconDataHex by remember { mutableStateOf(DEFAULT_BEACON_DATA_HEX) }
     val selectedCheckpoint = checkpoints.firstOrNull { it.id == selectedCheckpointId }
     var editedBeaconDataHex by remember { mutableStateOf("") }
+    var adjustingMapBackground by remember { mutableStateOf(false) }
 
     LaunchedEffect(selectedCheckpoint?.id, selectedCheckpoint?.beaconDataHex) {
         editedBeaconDataHex = selectedCheckpoint?.beaconDataHex.orEmpty()
@@ -308,91 +364,214 @@ private fun AdminScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         MapSurface(
             checkpoints = checkpoints,
             beaconSignals = beaconSignals,
             nowElapsedRealtime = nowElapsedRealtime,
+            mapBackgroundImage = mapBackgroundImage,
             selectedCheckpointId = selectedCheckpointId,
             editable = true,
+            adjustingMapBackground = adjustingMapBackground,
             onSelectCheckpoint = onSelectCheckpoint,
             onMoveCheckpoint = onMoveCheckpoint,
+            onMoveMapBackground = onMoveMapBackground,
             modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .widthIn(max = 520.dp)
                 .fillMaxWidth()
-                .weight(1f),
         )
 
-        Surface(
-            color = PanelBackground,
-            shape = RoundedCornerShape(8.dp),
-            shadowElevation = 1.dp,
+        MapBackgroundPanel(
+            mapBackgroundImage = mapBackgroundImage,
+            adjustingMapBackground = adjustingMapBackground,
+            onMapBackgroundSelected = onMapBackgroundSelected,
+            onAdjustingMapBackgroundChange = { adjustingMapBackground = it },
+            onSetMapBackgroundScale = onSetMapBackgroundScale,
+            onResetMapBackgroundPlacement = onResetMapBackgroundPlacement,
+        )
+
+        AddCheckpointPanel(
+            newCheckpointName = newCheckpointName,
+            newBeaconDataHex = newBeaconDataHex,
+            onNameChange = { newCheckpointName = it },
+            onBeaconDataChange = { newBeaconDataHex = normalizeBeaconHex(it) },
+            onAddCheckpoint = {
+                onAddCheckpoint(newCheckpointName, newBeaconDataHex)
+                newCheckpointName = ""
+            },
+        )
+
+        SelectedCheckpointEditor(
+            checkpoint = selectedCheckpoint,
+            editedBeaconDataHex = editedBeaconDataHex,
+            onBeaconDataChange = { editedBeaconDataHex = normalizeBeaconHex(it) },
+            onApplyBeaconData = {
+                if (selectedCheckpoint != null) {
+                    onUpdateCheckpointBeaconData(
+                        selectedCheckpoint.id,
+                        editedBeaconDataHex,
+                    )
+                }
+            },
+        )
+
+        CheckpointAdminList(
+            checkpoints = checkpoints,
+            selectedCheckpointId = selectedCheckpointId,
+            onSelectCheckpoint = onSelectCheckpoint,
+        )
+    }
+}
+
+@Composable
+private fun MapBackgroundPanel(
+    mapBackgroundImage: MapBackgroundImage,
+    adjustingMapBackground: Boolean,
+    onMapBackgroundSelected: (Uri) -> Unit,
+    onAdjustingMapBackgroundChange: (Boolean) -> Unit,
+    onSetMapBackgroundScale: (Float) -> Unit,
+    onResetMapBackgroundPlacement: () -> Unit,
+) {
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            onMapBackgroundSelected(uri)
+            onAdjustingMapBackgroundChange(true)
+        }
+    }
+    val hasBackgroundImage = mapBackgroundImage.uri != null
+
+    Surface(
+        color = PanelBackground,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            Text(
+                text = "地圖底圖",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        value = newCheckpointName,
-                        onValueChange = { newCheckpointName = it },
-                        label = { Text("檢核點名稱") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = newBeaconDataHex,
-                        onValueChange = { newBeaconDataHex = normalizeBeaconHex(it) },
-                        label = { Text("Beacon Data") },
-                        singleLine = true,
-                        modifier = Modifier.width(150.dp),
-                    )
-                }
-
                 Button(
+                    onClick = { imagePicker.launch("image/*") },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (hasBackgroundImage) "更換圖片" else "匯入圖片")
+                }
+                OutlinedButton(
                     onClick = {
-                        onAddCheckpoint(newCheckpointName, newBeaconDataHex)
-                        newCheckpointName = ""
+                        onAdjustingMapBackgroundChange(!adjustingMapBackground)
                     },
-                    modifier = Modifier.align(Alignment.End),
+                    enabled = hasBackgroundImage,
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Text("新增檢核點")
+                    Text(if (adjustingMapBackground) "完成調整" else "調整位置")
                 }
-
-                SelectedCheckpointEditor(
-                    checkpoint = selectedCheckpoint,
-                    editedBeaconDataHex = editedBeaconDataHex,
-                    onBeaconDataChange = { editedBeaconDataHex = normalizeBeaconHex(it) },
-                    onApplyBeaconData = {
-                        if (selectedCheckpoint != null) {
-                            onUpdateCheckpointBeaconData(
-                                selectedCheckpoint.id,
-                                editedBeaconDataHex,
-                            )
-                        }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        onSetMapBackgroundScale(mapBackgroundImage.scale - 0.1f)
                     },
-                )
-
-                Column(
-                    modifier = Modifier
-                        .heightIn(max = 150.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    enabled = hasBackgroundImage,
+                    modifier = Modifier.weight(1f),
                 ) {
-                    checkpoints.forEach { checkpoint ->
-                        CheckpointAdminRow(
-                            checkpoint = checkpoint,
-                            isSelected = checkpoint.id == selectedCheckpointId,
-                            onClick = { onSelectCheckpoint(checkpoint.id) },
-                        )
-                    }
+                    Text("縮小")
                 }
+                OutlinedButton(
+                    onClick = {
+                        onSetMapBackgroundScale(mapBackgroundImage.scale + 0.1f)
+                    },
+                    enabled = hasBackgroundImage,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("放大")
+                }
+                OutlinedButton(
+                    onClick = onResetMapBackgroundPlacement,
+                    enabled = hasBackgroundImage,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("置中")
+                }
+            }
+            Text(
+                text = if (adjustingMapBackground) {
+                    "拖曳地圖可移動底圖"
+                } else {
+                    "底圖比例：${(mapBackgroundImage.scale * 100).roundToInt()}%"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF667176),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddCheckpointPanel(
+    newCheckpointName: String,
+    newBeaconDataHex: String,
+    onNameChange: (String) -> Unit,
+    onBeaconDataChange: (String) -> Unit,
+    onAddCheckpoint: () -> Unit,
+) {
+    Surface(
+        color = PanelBackground,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "新增檢核點",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            OutlinedTextField(
+                value = newCheckpointName,
+                onValueChange = onNameChange,
+                label = { Text("檢核點名稱") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = newBeaconDataHex,
+                onValueChange = onBeaconDataChange,
+                label = { Text("Beacon Data") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = onAddCheckpoint,
+                modifier = Modifier.align(Alignment.End),
+            ) {
+                Text("新增")
             }
         }
     }
@@ -422,26 +601,58 @@ private fun SelectedCheckpointEditor(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(
+            OutlinedTextField(
+                value = editedBeaconDataHex,
+                onValueChange = onBeaconDataChange,
+                label = { Text("Beacon Data") },
+                singleLine = true,
+                enabled = checkpoint != null,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            )
+            Button(
+                onClick = onApplyBeaconData,
+                enabled = checkpoint != null &&
+                    editedBeaconDataHex.isNotBlank() &&
+                    editedBeaconDataHex != checkpoint.beaconDataHex,
+                modifier = Modifier.align(Alignment.End),
             ) {
-                OutlinedTextField(
-                    value = editedBeaconDataHex,
-                    onValueChange = onBeaconDataChange,
-                    label = { Text("Beacon Data") },
-                    singleLine = true,
-                    enabled = checkpoint != null,
-                    modifier = Modifier.weight(1f),
-                )
-                Button(
-                    onClick = onApplyBeaconData,
-                    enabled = checkpoint != null &&
-                        editedBeaconDataHex.isNotBlank() &&
-                        editedBeaconDataHex != checkpoint.beaconDataHex,
-                ) {
-                    Text("套用")
+                Text("套用")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CheckpointAdminList(
+    checkpoints: List<Checkpoint>,
+    selectedCheckpointId: String?,
+    onSelectCheckpoint: (String) -> Unit,
+) {
+    Surface(
+        color = PanelBackground,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "檢核點列表",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                checkpoints.forEach { checkpoint ->
+                    CheckpointAdminRow(
+                        checkpoint = checkpoint,
+                        isSelected = checkpoint.id == selectedCheckpointId,
+                        onClick = { onSelectCheckpoint(checkpoint.id) },
+                    )
                 }
             }
         }
@@ -453,44 +664,97 @@ private fun MapSurface(
     checkpoints: List<Checkpoint>,
     beaconSignals: Map<String, BeaconSignal>,
     nowElapsedRealtime: Long,
+    mapBackgroundImage: MapBackgroundImage,
     selectedCheckpointId: String?,
     editable: Boolean,
+    adjustingMapBackground: Boolean,
     onSelectCheckpoint: (String) -> Unit,
     onMoveCheckpoint: (String, MapPoint) -> Unit,
+    onMoveMapBackground: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
+    val backgroundBitmap = remember(context, mapBackgroundImage.uri) {
+        mapBackgroundImage.uri?.let { uri -> loadImageBitmap(context, uri) }
+    }
+    val checkpointEditingEnabled = editable && !adjustingMapBackground
     val density = LocalDensity.current
     val markerSize = if (editable) 72.dp else 78.dp
     val markerSizePx = with(density) { markerSize.toPx() }
 
     Box(
         modifier = modifier
-            .heightIn(min = 300.dp)
+            .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
             .background(MapBackground)
             .border(1.dp, MapBorder, RoundedCornerShape(8.dp))
             .onSizeChanged { mapSize = it }
-            .pointerInput(editable, selectedCheckpointId, mapSize) {
-                if (editable) {
-                    detectTapGestures { tapOffset ->
-                        val checkpointId = selectedCheckpointId ?: return@detectTapGestures
-                        if (mapSize.width > 0 && mapSize.height > 0) {
-                            onMoveCheckpoint(
-                                checkpointId,
-                                MapPoint(
-                                    x = tapOffset.x / mapSize.width,
-                                    y = tapOffset.y / mapSize.height,
-                                ).clamped(),
-                            )
+            .then(
+                if (editable && adjustingMapBackground && backgroundBitmap != null) {
+                    Modifier.pointerInput(mapSize) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            if (mapSize.width > 0 && mapSize.height > 0) {
+                                onMoveMapBackground(
+                                    dragAmount.x / mapSize.width,
+                                    dragAmount.y / mapSize.height,
+                                )
+                            }
                         }
                     }
-                }
-            },
+                } else {
+                    Modifier.pointerInput(checkpointEditingEnabled, selectedCheckpointId, mapSize) {
+                        if (checkpointEditingEnabled) {
+                            detectTapGestures { tapOffset ->
+                                val checkpointId = selectedCheckpointId ?: return@detectTapGestures
+                                if (mapSize.width > 0 && mapSize.height > 0) {
+                                    onMoveCheckpoint(
+                                        checkpointId,
+                                        MapPoint(
+                                            x = tapOffset.x / mapSize.width,
+                                            y = tapOffset.y / mapSize.height,
+                                        ).clamped(),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+            ),
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
             val gridStroke = 1.dp.toPx()
             val routeStroke = 3.dp.toPx()
+
+            if (backgroundBitmap != null) {
+                val imageAspect = backgroundBitmap.width.toFloat() / backgroundBitmap.height
+                val baseWidth: Float
+                val baseHeight: Float
+
+                if (imageAspect >= 1f) {
+                    baseWidth = size.width
+                    baseHeight = size.width / imageAspect
+                } else {
+                    baseHeight = size.height
+                    baseWidth = size.height * imageAspect
+                }
+
+                val drawWidth = (baseWidth * mapBackgroundImage.scale).coerceAtLeast(1f)
+                val drawHeight = (baseHeight * mapBackgroundImage.scale).coerceAtLeast(1f)
+                val left = (size.width - drawWidth) / 2f +
+                    mapBackgroundImage.offsetX * size.width
+                val top = (size.height - drawHeight) / 2f +
+                    mapBackgroundImage.offsetY * size.height
+
+                drawImage(
+                    image = backgroundBitmap,
+                    dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                    dstSize = IntSize(drawWidth.roundToInt(), drawHeight.roundToInt()),
+                    alpha = 0.88f,
+                    filterQuality = FilterQuality.Medium,
+                )
+            }
 
             for (index in 1..4) {
                 val x = size.width * index / 5f
@@ -545,11 +809,11 @@ private fun MapSurface(
                     .clickable(
                         interactionSource = interactionSource,
                         indication = null,
-                        enabled = editable,
+                        enabled = checkpointEditingEnabled,
                         onClick = { onSelectCheckpoint(checkpoint.id) },
                     )
                     .then(
-                        if (editable) {
+                        if (checkpointEditingEnabled) {
                             Modifier.pointerInput(checkpoint.id, mapSize) {
                                 detectDragGestures(
                                     onDragStart = {
@@ -787,6 +1051,14 @@ private fun CheckpointAdminRow(
             )
         }
     }
+}
+
+private fun loadImageBitmap(context: android.content.Context, uri: Uri): ImageBitmap? {
+    return runCatching {
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
+        }
+    }.getOrNull()
 }
 
 @Preview(showBackground = true)
