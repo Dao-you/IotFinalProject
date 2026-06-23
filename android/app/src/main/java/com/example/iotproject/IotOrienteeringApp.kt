@@ -234,6 +234,12 @@ fun IotOrienteeringApp(
         onPhoneBeaconDataChange(checkpoint.beaconDataHex)
     }
 
+    fun clearCheckInRecords() {
+        checkInRecords.clear()
+        latestCheckInMessage = null
+        onPhoneBeaconDataChange(null)
+    }
+
     Scaffold(containerColor = AppBackground) { innerPadding ->
         Column(
             modifier = Modifier
@@ -266,6 +272,7 @@ fun IotOrienteeringApp(
                     hasBlePermission = hasBlePermission,
                     onRequestBlePermission = onRequestBlePermission,
                     onCheckIn = ::checkInCheckpoint,
+                    onClearCheckInRecords = ::clearCheckInRecords,
                 )
 
                 AppScreen.Admin -> AdminScreen(
@@ -338,6 +345,7 @@ private fun GameScreen(
     hasBlePermission: Boolean,
     onRequestBlePermission: () -> Unit,
     onCheckIn: (Checkpoint) -> Unit,
+    onClearCheckInRecords: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -380,7 +388,10 @@ private fun GameScreen(
             onCheckIn = onCheckIn,
         )
 
-        CheckInRecordList(records = checkInRecords)
+        CheckInRecordList(
+            records = checkInRecords,
+            onClearRecords = onClearCheckInRecords,
+        )
     }
 }
 
@@ -1185,7 +1196,10 @@ private fun CheckInStatusBadge(
 }
 
 @Composable
-private fun CheckInRecordList(records: List<CheckInRecord>) {
+private fun CheckInRecordList(
+    records: List<CheckInRecord>,
+    onClearRecords: () -> Unit,
+) {
     Surface(
         color = PanelBackground,
         shape = RoundedCornerShape(8.dp),
@@ -1213,6 +1227,14 @@ private fun CheckInRecordList(records: List<CheckInRecord>) {
                 records.forEach { record ->
                     CheckInRecordRow(record = record)
                 }
+            }
+
+            OutlinedButton(
+                onClick = onClearRecords,
+                enabled = records.isNotEmpty(),
+                modifier = Modifier.align(Alignment.End),
+            ) {
+                Text("刪除簽到記錄")
             }
         }
     }
