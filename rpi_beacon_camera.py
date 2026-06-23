@@ -29,6 +29,7 @@ CAMERA_COOLDOWN_SECONDS = 3
 CAMERA_SESSION_TIMEOUT_SECONDS = 15
 ADVERTISEMENT_REGISTRATION_TIMEOUT_SECONDS = 5
 BTMGMT_ADVERTISEMENT_INSTANCE = 1
+BTMGMT_ADD_ADVERTISEMENT_TIMEOUT_SECONDS = 15
 BTMGMT_COMMAND_TIMEOUT_SECONDS = 5
 BLE_AD_FLAGS_GENERAL_DISCOVERABLE = b"\x02\x01\x06"
 
@@ -189,20 +190,9 @@ class PiBeaconAdvertiser:
         adv_data = self._build_btmgmt_advertising_data()
         result = self._run_btmgmt(
             ["add-adv", "-d", adv_data.hex(), str(self.btmgmt_instance)],
-            check=False,
+            check=True,
+            timeout=BTMGMT_ADD_ADVERTISEMENT_TIMEOUT_SECONDS,
         )
-        if result is None:
-            print(
-                "btmgmt add-adv timed out after submitting the command; "
-                "continuing with the advertising instance managed by BlueZ",
-                flush=True,
-            )
-        elif result.returncode != 0:
-            stderr = result.stderr.strip() or result.stdout.strip()
-            raise RuntimeError(
-                "btmgmt failed to create an advertising instance"
-                + (f": {stderr}" if stderr else "")
-            )
 
         self.btmgmt_active = True
         self.backend = "btmgmt"
@@ -212,7 +202,11 @@ class PiBeaconAdvertiser:
         )
 
     def _stop_btmgmt_advertisement(self):
-        self._run_btmgmt(["rm-adv", str(self.btmgmt_instance)], check=False)
+        self._run_btmgmt(
+            ["rm-adv", str(self.btmgmt_instance)],
+            check=False,
+            timeout=BTMGMT_COMMAND_TIMEOUT_SECONDS,
+        )
         self.btmgmt_active = False
         if self.backend == "btmgmt":
             self.backend = None
@@ -234,38 +228,36 @@ class PiBeaconAdvertiser:
 
         return adv_data
 
-    def _run_btmgmt(self, args, check):
+    def _run_btmgmt(self, args, check, timeout=BTMGMT_COMMAND_TIMEOUT_SECONDS):
         command = self._btmgmt_command() + args
+        process = subprocess.Popen(command, stdin=subprocess.PIPE)
         try:
-            result = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=BTMGMT_COMMAND_TIMEOUT_SECONDS,
-            )
+            returncode = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             message = (
                 "btmgmt command timed out: "
                 f"{' '.join(command)}"
             )
+            process.kill()
+            process.wait()
             if check:
                 raise RuntimeError(message) from exc
             print(message, flush=True)
             return None
+        finally:
+            if process.stdin is not None:
+                try:
+                    process.stdin.close()
+                except BrokenPipeError:
+                    pass
 
-        if result.stdout.strip():
-            print(result.stdout.strip(), flush=True)
-
-        if result.returncode != 0 and check:
-            stderr = result.stderr.strip() or result.stdout.strip()
+        if returncode != 0 and check:
             raise RuntimeError(
                 "btmgmt command failed: "
                 f"{' '.join(command)}"
-                + (f"\n{stderr}" if stderr else "")
             )
 
-        return result
+        return subprocess.CompletedProcess(command, returncode)
 
     def _btmgmt_command(self):
         btmgmt_path = shutil.which("btmgmt")
