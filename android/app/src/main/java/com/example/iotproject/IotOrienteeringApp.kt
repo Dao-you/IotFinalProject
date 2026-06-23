@@ -67,6 +67,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.iotproject.ui.theme.IoTProjectTheme
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private val AppBackground = Color(0xFFF5F7F7)
@@ -78,13 +81,26 @@ private val RouteColor = Color(0xFFE08C2B)
 private val PinIdle = Color(0xFF3C596B)
 private val PinActive = Color(0xFF13A36F)
 private val PinSelected = Color(0xFF2D6CDF)
+private val PinCheckedIn = Color(0xFF7652B7)
 private val WarningBackground = Color(0xFFFFF3CF)
+private val CheckInBackground = Color(0xFFEAF7F1)
+private val CheckInAccent = Color(0xFF167653)
+
+private const val CHECK_IN_STRENGTH_THRESHOLD = 0.62f
 
 private data class MapBackgroundImage(
     val uri: Uri? = null,
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
     val scale: Float = 1f,
+)
+
+private data class CheckInRecord(
+    val checkpointId: String,
+    val checkpointName: String,
+    val beaconDataHex: String,
+    val checkedInAtMillis: Long,
+    val rssi: Int?,
 )
 
 private enum class AppScreen(val title: String) {
@@ -125,6 +141,9 @@ fun IotOrienteeringApp(
     }
     var selectedCheckpointId by remember { mutableStateOf(checkpoints.firstOrNull()?.id) }
     var mapBackgroundImage by remember { mutableStateOf(MapBackgroundImage()) }
+    val checkInRecords = remember { mutableStateListOf<CheckInRecord>() }
+    var latestCheckInMessage by remember { mutableStateOf<String?>(null) }
+    val checkedInCheckpointIds = checkInRecords.map { record -> record.checkpointId }.toSet()
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -190,6 +209,25 @@ fun IotOrienteeringApp(
         )
     }
 
+    fun checkInCheckpoint(checkpoint: Checkpoint) {
+        if (checkInRecords.any { record -> record.checkpointId == checkpoint.id }) {
+            return
+        }
+
+        val signal = beaconSignals[checkpoint.beaconDataHex]
+        checkInRecords.add(
+            0,
+            CheckInRecord(
+                checkpointId = checkpoint.id,
+                checkpointName = checkpoint.name,
+                beaconDataHex = checkpoint.beaconDataHex,
+                checkedInAtMillis = System.currentTimeMillis(),
+                rssi = signal?.rssi,
+            ),
+        )
+        latestCheckInMessage = "${checkpoint.name} 簽到成功。可以到互動裝置前拍攝團體照。"
+    }
+
     Scaffold(containerColor = AppBackground) { innerPadding ->
         Column(
             modifier = Modifier
@@ -213,8 +251,12 @@ fun IotOrienteeringApp(
                     beaconSignals = beaconSignals,
                     nowElapsedRealtime = nowElapsedRealtime,
                     mapBackgroundImage = mapBackgroundImage,
+                    checkedInCheckpointIds = checkedInCheckpointIds,
+                    checkInRecords = checkInRecords,
+                    latestCheckInMessage = latestCheckInMessage,
                     hasBlePermission = hasBlePermission,
                     onRequestBlePermission = onRequestBlePermission,
+                    onCheckIn = ::checkInCheckpoint,
                 )
 
                 AppScreen.Admin -> AdminScreen(
@@ -271,8 +313,12 @@ private fun GameScreen(
     beaconSignals: Map<String, BeaconSignal>,
     nowElapsedRealtime: Long,
     mapBackgroundImage: MapBackgroundImage,
+    checkedInCheckpointIds: Set<String>,
+    checkInRecords: List<CheckInRecord>,
+    latestCheckInMessage: String?,
     hasBlePermission: Boolean,
     onRequestBlePermission: () -> Unit,
+    onCheckIn: (Checkpoint) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -290,6 +336,7 @@ private fun GameScreen(
             beaconSignals = beaconSignals,
             nowElapsedRealtime = nowElapsedRealtime,
             mapBackgroundImage = mapBackgroundImage,
+            checkedInCheckpointIds = checkedInCheckpointIds,
             selectedCheckpointId = null,
             editable = false,
             adjustingMapBackground = false,
@@ -302,11 +349,19 @@ private fun GameScreen(
                 .fillMaxWidth()
         )
 
+        latestCheckInMessage?.let { message ->
+            CheckInSuccessBanner(message = message)
+        }
+
         CheckpointSignalList(
             checkpoints = checkpoints,
             beaconSignals = beaconSignals,
             nowElapsedRealtime = nowElapsedRealtime,
+            checkedInCheckpointIds = checkedInCheckpointIds,
+            onCheckIn = onCheckIn,
         )
+
+        CheckInRecordList(records = checkInRecords)
     }
 }
 
@@ -373,6 +428,7 @@ private fun AdminScreen(
             beaconSignals = beaconSignals,
             nowElapsedRealtime = nowElapsedRealtime,
             mapBackgroundImage = mapBackgroundImage,
+            checkedInCheckpointIds = emptySet(),
             selectedCheckpointId = selectedCheckpointId,
             editable = true,
             adjustingMapBackground = adjustingMapBackground,
@@ -665,6 +721,7 @@ private fun MapSurface(
     beaconSignals: Map<String, BeaconSignal>,
     nowElapsedRealtime: Long,
     mapBackgroundImage: MapBackgroundImage,
+    checkedInCheckpointIds: Set<String>,
     selectedCheckpointId: String?,
     editable: Boolean,
     adjustingMapBackground: Boolean,
@@ -792,6 +849,7 @@ private fun MapSurface(
         checkpoints.forEach { checkpoint ->
             val signal = beaconSignals[checkpoint.beaconDataHex]
             val strength = proximityStrength(signal, nowElapsedRealtime)
+            val checkedIn = checkpoint.id in checkedInCheckpointIds
             val left = checkpoint.position.x * mapSize.width - markerSizePx / 2f
             val top = checkpoint.position.y * mapSize.height - markerSizePx / 2f
             var dragPosition = checkpoint.position
@@ -841,6 +899,7 @@ private fun MapSurface(
                     checkpoint = checkpoint,
                     strength = strength,
                     selected = checkpoint.id == selectedCheckpointId,
+                    checkedIn = checkedIn,
                 )
             }
         }
@@ -852,6 +911,7 @@ private fun CheckpointMarker(
     checkpoint: Checkpoint,
     strength: Float,
     selected: Boolean,
+    checkedIn: Boolean,
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -864,18 +924,32 @@ private fun CheckpointMarker(
             )
             val effectRadius = 19.dp.toPx() + 22.dp.toPx() * strength
             val pinRadius = 9.dp.toPx()
+            val proximityColor = if (checkedIn) PinCheckedIn else PinActive
+            val pinColor = when {
+                checkedIn -> PinCheckedIn
+                strength > 0f -> PinActive
+                else -> PinIdle
+            }
 
             if (strength > 0f) {
                 drawCircle(
-                    color = PinActive.copy(alpha = 0.16f + 0.28f * strength),
+                    color = proximityColor.copy(alpha = 0.16f + 0.28f * strength),
                     radius = effectRadius,
                     center = center,
                 )
                 drawCircle(
-                    color = PinActive.copy(alpha = 0.55f),
+                    color = proximityColor.copy(alpha = 0.55f),
                     radius = effectRadius,
                     center = center,
                     style = Stroke(width = 2.dp.toPx() + 4.dp.toPx() * strength),
+                )
+            }
+
+            if (checkedIn) {
+                drawCircle(
+                    color = PinCheckedIn.copy(alpha = 0.22f),
+                    radius = 15.dp.toPx(),
+                    center = center,
                 )
             }
 
@@ -889,7 +963,7 @@ private fun CheckpointMarker(
             }
 
             drawCircle(
-                color = if (strength > 0f) PinActive else PinIdle,
+                color = pinColor,
                 radius = pinRadius,
                 center = center,
             )
@@ -901,7 +975,7 @@ private fun CheckpointMarker(
         }
 
         Surface(
-            color = Color.White.copy(alpha = 0.92f),
+            color = if (checkedIn) PinCheckedIn.copy(alpha = 0.94f) else Color.White.copy(alpha = 0.92f),
             shape = RoundedCornerShape(6.dp),
             shadowElevation = 1.dp,
             modifier = Modifier
@@ -911,9 +985,38 @@ private fun CheckpointMarker(
             Text(
                 text = checkpoint.name,
                 style = MaterialTheme.typography.labelSmall,
+                color = if (checkedIn) Color.White else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CheckInSuccessBanner(message: String) {
+    Surface(
+        color = CheckInBackground,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "簽到成功",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = CheckInAccent,
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF40534C),
             )
         }
     }
@@ -924,6 +1027,8 @@ private fun CheckpointSignalList(
     checkpoints: List<Checkpoint>,
     beaconSignals: Map<String, BeaconSignal>,
     nowElapsedRealtime: Long,
+    checkedInCheckpointIds: Set<String>,
+    onCheckIn: (Checkpoint) -> Unit,
 ) {
     Surface(
         color = PanelBackground,
@@ -944,10 +1049,14 @@ private fun CheckpointSignalList(
             checkpoints.forEach { checkpoint ->
                 val signal = beaconSignals[checkpoint.beaconDataHex]
                 val strength = proximityStrength(signal, nowElapsedRealtime)
+                val checkedIn = checkpoint.id in checkedInCheckpointIds
                 CheckpointSignalRow(
                     checkpoint = checkpoint,
                     signal = signal,
                     strength = strength,
+                    checkedIn = checkedIn,
+                    canCheckIn = !checkedIn && strength >= CHECK_IN_STRENGTH_THRESHOLD,
+                    onCheckIn = { onCheckIn(checkpoint) },
                 )
             }
         }
@@ -959,29 +1068,176 @@ private fun CheckpointSignalRow(
     checkpoint: Checkpoint,
     signal: BeaconSignal?,
     strength: Float,
+    checkedIn: Boolean,
+    canCheckIn: Boolean,
+    onCheckIn: () -> Unit,
 ) {
+    val rowBackground = if (checkedIn) CheckInBackground else Color(0xFFF6F8F8)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(rowBackground)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = checkpoint.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = signal?.let { "${it.dataHex} / ${it.rssi} dBm" } ?: checkpoint.beaconDataHex,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF667176),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            CheckInStatusBadge(
+                checkedIn = checkedIn,
+                canCheckIn = canCheckIn,
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = when {
+                    checkedIn -> "已完成簽到，可前往互動裝置拍攝團體照"
+                    canCheckIn -> "已靠近檢核點，可以簽到"
+                    else -> "靠近檢核點後可簽到"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (checkedIn) CheckInAccent else Color(0xFF667176),
+                modifier = Modifier.weight(1f),
+            )
+            SignalMeter(strength = strength)
+            if (canCheckIn) {
+                Button(onClick = onCheckIn) {
+                    Text("簽到")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CheckInStatusBadge(
+    checkedIn: Boolean,
+    canCheckIn: Boolean,
+) {
+    val text = when {
+        checkedIn -> "已簽到"
+        canCheckIn -> "可簽到"
+        else -> "未簽到"
+    }
+    val background = when {
+        checkedIn -> PinCheckedIn.copy(alpha = 0.14f)
+        canCheckIn -> PinActive.copy(alpha = 0.14f)
+        else -> Color(0xFFE1E7E5)
+    }
+    val foreground = when {
+        checkedIn -> PinCheckedIn
+        canCheckIn -> PinActive
+        else -> Color(0xFF667176)
+    }
+
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = foreground,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(background)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun CheckInRecordList(records: List<CheckInRecord>) {
+    Surface(
+        color = PanelBackground,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "簽到記錄",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+
+            if (records.isEmpty()) {
+                Text(
+                    text = "尚未完成任何檢核點簽到",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF667176),
+                )
+            } else {
+                records.forEach { record ->
+                    CheckInRecordRow(record = record)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CheckInRecordRow(record: CheckInRecord) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFFF6F8F8))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(PinCheckedIn),
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = checkpoint.name,
+                text = record.checkpointName,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = signal?.let { "${it.dataHex} / ${it.rssi} dBm" } ?: checkpoint.beaconDataHex,
+                text = record.rssi?.let { "${record.beaconDataHex} / $it dBm" }
+                    ?: record.beaconDataHex,
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF667176),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SignalMeter(strength = strength)
+        Text(
+            text = formatCheckInTime(record.checkedInAtMillis),
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFF667176),
+        )
     }
 }
 
@@ -1059,6 +1315,10 @@ private fun loadImageBitmap(context: android.content.Context, uri: Uri): ImageBi
             BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
         }
     }.getOrNull()
+}
+
+private fun formatCheckInTime(timeMillis: Long): String {
+    return SimpleDateFormat("HH:mm:ss", Locale.TAIWAN).format(Date(timeMillis))
 }
 
 @Preview(showBackground = true)

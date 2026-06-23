@@ -10,6 +10,9 @@
   - 顯示每個檢核點圖釘與檢核點狀態。
   - 掃描 Manufacturer ID `0xFFFF` 的 BLE advertisement。
   - 當掃到與檢核點 `Beacon Data` 相同的 payload 時，依 RSSI 與最近看到時間加強圖釘光暈。
+  - 接近強度達門檻後可手動簽到檢核點，同一檢核點只記錄第一次簽到。
+  - 已簽到的檢核點會在地圖圖釘與狀態列使用不同顏色標示。
+  - 顯示簽到記錄，並在簽到成功後提示玩家可到互動裝置前拍攝團體照。
 - 管理介面：
   - 新增檢核點名稱與 `Beacon Data`。
   - 選取檢核點後，可在地圖上放置或拖曳圖釘。
@@ -17,7 +20,7 @@
   - 可匯入圖片作為地圖底圖，並切換調整模式拖曳底圖位置。
   - 可放大、縮小或置中底圖。
   - 地圖、新增表單、檢核點編輯與列表會分段顯示，避免手機畫面過度擁擠。
-  - 目前檢核點與底圖資料保存在 App runtime state，重啟 App 後會回到預設狀態。
+  - 目前檢核點、底圖與簽到記錄保存在 App runtime state，重啟 App 後會回到預設狀態。
 
 ## Beacon 設定
 
@@ -26,7 +29,7 @@
 - Manufacturer ID: `0xFFFF`
 - Pi beacon data: `00110044`
 
-Android App 目前也以 `00110044` 作為預設檢核點 `Beacon Data`。如果多個檢核點都使用相同 payload，手機端只能知道附近有符合格式的 beacon，無法分辨是哪一個實體檢核點，因此所有相同 payload 的檢核點都會同時顯示接近效果。
+Android App 目前也以 `00110044` 作為預設檢核點 `Beacon Data`。如果多個檢核點都使用相同 payload，手機端只能知道附近有符合格式的 beacon，無法分辨是哪一個實體檢核點，因此所有相同 payload 的檢核點都會同時顯示接近效果，也會同時達到可簽到狀態。
 
 正式場域建議讓每台 Raspberry Pi 使用不同 checkpoint ID 或不同 manufacturer data payload，並同步更新管理介面的檢核點 `Beacon Data`。
 
