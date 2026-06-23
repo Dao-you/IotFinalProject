@@ -174,7 +174,7 @@ Windows PowerShell：
 .\gradlew.bat installDebug
 ```
 
-第一次開啟 App 時需要授權 BLE 掃描與發射權限。
+第一次開啟 App 時需要授權 BLE 掃描、發射與定位權限；Android 12+ 仍需要定位權限，因為 App 會用 BLE RSSI 判斷接近程度。
 
 ## 後續工作
 
@@ -193,6 +193,7 @@ Windows PowerShell：
 - 修改 `rpi_beacon_camera.py` 時，要保留 headless 完整模式與 `--beacon-only` 單機模式。
 - 不要把 `camera.py` 的相機/GPIO 依賴重新放回 `rpi_beacon_camera.py` 的 top-level import，否則 BLE-only Pi 會無法啟動。
 - 修改 BLE 流程時，要同時檢查 Android `DEFAULT_MANUFACTURER_ID`、`DEFAULT_BEACON_DATA_HEX`、Pi 端 `--pi-data`、`--phone-data` 是否仍一致。
+- Android 掃描 Pi beacon 時不要使用 `BLUETOOTH_SCAN` 的 `neverForLocation` flag，否則部分 BLE beacon 可能會被系統過濾。
 - 修改相機流程時，要維持「馬達正在居中時不能拍照」這個規則。
 - 修改多人居中時，要保留單人情境與原本操作手感。
 - 不要把測試照片、cache、virtualenv 或本機硬體輸出檔納入 commit。

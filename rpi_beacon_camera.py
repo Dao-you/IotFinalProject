@@ -10,6 +10,7 @@ from bluez_venv import enable_system_dbus_path
 
 enable_system_dbus_path()
 
+import dbus
 from bluezero import adapter
 from bluezero import advertisement
 
@@ -23,6 +24,7 @@ RSSI_TRIGGER_DBM = -60
 REQUIRED_STRONG_HITS = 3
 CAMERA_COOLDOWN_SECONDS = 3
 CAMERA_SESSION_TIMEOUT_SECONDS = 15
+ADVERTISEMENT_REGISTRATION_TIMEOUT_SECONDS = 5
 
 
 def format_hex(data):
@@ -99,11 +101,24 @@ class PiBeaconAdvertiser:
         self.advert.local_name = self.local_name
         self.advert.manufacturer_data(self.manufacturer_id, self.beacon_data)
 
-        self.manager = advertisement.AdvertisingManager(self.adapter_address)
+        self.manager = ConfirmingAdvertisingManager(self.adapter_address)
         self.manager.register_advertisement(self.advert, {})
 
         self.thread = threading.Thread(target=self._run, args=(self.advert,), daemon=True)
         self.thread.start()
+
+        if not self.manager.registration_event.wait(
+            timeout=ADVERTISEMENT_REGISTRATION_TIMEOUT_SECONDS
+        ):
+            print(
+                "Warning: BlueZ did not confirm advertisement registration. "
+                "Check bluetoothd experimental support and journal logs.",
+                flush=True,
+            )
+        elif self.manager.registration_error is not None:
+            error = self.manager.registration_error
+            self.stop()
+            raise RuntimeError(f"Failed to register BLE advertisement: {error}")
 
         print(f"Advertising Pi beacon on {self.adapter_address}")
         print(f"Name: {self.local_name}")
@@ -140,6 +155,33 @@ class PiBeaconAdvertiser:
         self.advert = None
         self.manager = None
         self.thread = None
+
+
+class ConfirmingAdvertisingManager(advertisement.AdvertisingManager):
+    def __init__(self, adapter_addr=None):
+        super().__init__(adapter_addr)
+        self.registration_event = threading.Event()
+        self.registration_error = None
+
+    def register_advertisement(self, advert, options=None):
+        self.registration_event.clear()
+        self.registration_error = None
+
+        def handle_registered():
+            print("Advertisement registered", flush=True)
+            self.registration_event.set()
+
+        def handle_error(error):
+            self.registration_error = error
+            print(f"Failed to register advertisement: {error}", flush=True)
+            self.registration_event.set()
+
+        self.advert_mngr_methods.RegisterAdvertisement(
+            advert.path,
+            dbus.Dictionary(options or {}, signature="sv"),
+            reply_handler=handle_registered,
+            error_handler=handle_error,
+        )
 
 
 class PhoneBeaconWatcher:

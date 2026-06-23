@@ -52,6 +52,23 @@ write_root_file() {
     fi
 }
 
+enable_bluez_experimental() {
+    local main_conf="/etc/bluetooth/main.conf"
+
+    if [[ ! -f "$main_conf" ]]; then
+        echo "BlueZ main.conf not found at $main_conf; skipping experimental setting."
+        return
+    fi
+
+    if grep -Eq '^[[:space:]#]*Experimental[[:space:]]*=' "$main_conf"; then
+        run_root sed -i -E 's/^[[:space:]#]*Experimental[[:space:]]*=.*/Experimental = true/' "$main_conf"
+    elif grep -Eq '^\[General\]' "$main_conf"; then
+        run_root sed -i '/^\[General\]/a Experimental = true' "$main_conf"
+    else
+        printf "\n[General]\nExperimental = true\n" | run_root tee -a "$main_conf" > /dev/null
+    fi
+}
+
 normalize_hex() {
     local value="$1"
     value="${value//0x/}"
@@ -175,8 +192,12 @@ if command -v rfkill > /dev/null 2>&1; then
     run_root rfkill unblock bluetooth || true
 fi
 
+echo "Enabling BlueZ experimental LE advertising support..."
+enable_bluez_experimental
+
 if command -v systemctl > /dev/null 2>&1; then
-    run_root systemctl enable --now bluetooth
+    run_root systemctl enable bluetooth
+    run_root systemctl restart bluetooth
 fi
 
 echo "Creating standalone Python environment at $VENV_DIR..."
@@ -231,6 +252,7 @@ Requires=bluetooth.service
 Type=simple
 WorkingDirectory=$PROJECT_DIR
 EnvironmentFile=$ENV_FILE
+Environment=PYTHONUNBUFFERED=1
 ExecStart=$VENV_DIR/bin/python $PROJECT_DIR/rpi_beacon_camera.py --beacon-only --pi-name \${PI_LOCAL_NAME} --manufacturer-id \${MANUFACTURER_ID} --pi-data \${PI_BEACON_DATA}
 Restart=on-failure
 RestartSec=3

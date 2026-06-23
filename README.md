@@ -140,7 +140,14 @@ bash scripts/setup_rpi_standalone.sh --no-service
 也可手動執行 BLE-only 模式：
 
 ```bash
-python rpi_beacon_camera.py --beacon-only --pi-data 00110045 --pi-name RPi_CP2
+sudo systemctl stop iot-orienteering-beacon
+.venv-standalone/bin/python rpi_beacon_camera.py --beacon-only --pi-data 00110045 --pi-name RPi_CP2
+```
+
+終端機應顯示 `Advertisement registered`、`Manufacturer data: 0x00110045` 與 `Beacon-only mode`。測完後可恢復背景服務：
+
+```bash
+sudo systemctl start iot-orienteering-beacon
 ```
 
 ## Android App
@@ -165,7 +172,7 @@ cd android
 .\gradlew.bat installDebug
 ```
 
-第一次開啟 App 時需要授權 BLE 權限。Android 12 以上會要求 `BLUETOOTH_SCAN`、`BLUETOOTH_CONNECT`、`BLUETOOTH_ADVERTISE`；Android 11 以下會要求定位權限以支援 BLE 掃描。
+第一次開啟 App 時需要授權 BLE 權限。Android 12 以上會要求 Nearby Devices 權限與定位權限；Android 11 以下會要求定位權限以支援 BLE 掃描。此 App 會用 BLE RSSI 判斷接近程度，因此不能使用 `neverForLocation` 掃描模式。
 
 ## 開發注意事項
 

@@ -66,7 +66,7 @@ Windows PowerShell 可執行：
 .\gradlew.bat installDebug
 ```
 
-第一次開啟 App 時需要授權藍牙權限。Android 12 以上會要求 `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` / `BLUETOOTH_ADVERTISE`，Android 11 以下會要求定位權限以支援 BLE 掃描。
+第一次開啟 App 時需要授權藍牙權限。Android 12 以上會要求 Nearby Devices 權限與定位權限；Android 11 以下會要求定位權限以支援 BLE 掃描。此 App 會用 BLE RSSI 判斷接近程度，因此不能使用 `neverForLocation` 掃描模式。
 
 ## 後續工作
 
