@@ -1,4 +1,7 @@
+/__pycache__/
 /__pycaache__/
+/.venv/
+/.venv-standalone/
 /venv/
 .lgd-nfy0
 *.pyc

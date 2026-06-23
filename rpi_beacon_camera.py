@@ -13,27 +13,73 @@ enable_system_dbus_path()
 from bluezero import adapter
 from bluezero import advertisement
 
-from camera import run_camera_session
-
 
 PI_LOCAL_NAME = "RPi_112360104"
 MANUFACTURER_ID = 0xFFFF
 
 PI_BEACON_DATA = b"\x00\x11\x00\x44"
-PHONE_BEACON_DATA = b"\x00\x11\x00\x44"
 
 RSSI_TRIGGER_DBM = -60
 REQUIRED_STRONG_HITS = 3
 CAMERA_COOLDOWN_SECONDS = 3
 CAMERA_SESSION_TIMEOUT_SECONDS = 15
 
+
+def format_hex(data):
+    return f"0x{data.hex()}"
+
+
+def parse_hex_bytes(value):
+    clean_value = value.strip()
+    for token in ("0x", "0X", ":", "-", "_", " "):
+        clean_value = clean_value.replace(token, "")
+
+    if not clean_value:
+        raise argparse.ArgumentTypeError("hex payload cannot be empty")
+
+    if len(clean_value) % 2 != 0:
+        raise argparse.ArgumentTypeError("hex payload must contain full bytes")
+
+    try:
+        return bytes.fromhex(clean_value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("hex payload contains invalid characters") from exc
+
+
+def parse_manufacturer_id(value):
+    try:
+        manufacturer_id = int(value, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("manufacturer id must be an integer") from exc
+
+    if manufacturer_id < 0 or manufacturer_id > 0xFFFF:
+        raise argparse.ArgumentTypeError("manufacturer id must fit in 16 bits")
+
+    return manufacturer_id
+
+
+def load_camera_session_runner():
+    try:
+        from camera import run_camera_session
+    except ImportError as exc:
+        raise RuntimeError(
+            "Camera mode requires the full camera dependencies. "
+            "Use --beacon-only on Raspberry Pi units without camera/GPIO peripherals."
+        ) from exc
+
+    return run_camera_session
+
+
 class PiBeaconAdvertiser:
-    def __init__(self):
+    def __init__(self, local_name, manufacturer_id, beacon_data):
         self.advert = None
         self.manager = None
         self.thread = None
         self.adapter_address = None
         self.advert_id = 1
+        self.local_name = local_name
+        self.manufacturer_id = manufacturer_id
+        self.beacon_data = beacon_data
 
     def start(self):
         if self.advert is not None:
@@ -50,8 +96,8 @@ class PiBeaconAdvertiser:
 
         self.advert = advertisement.Advertisement(self.advert_id, "broadcast")
         self.advert_id += 1
-        self.advert.local_name = PI_LOCAL_NAME
-        self.advert.manufacturer_data(MANUFACTURER_ID, PI_BEACON_DATA)
+        self.advert.local_name = self.local_name
+        self.advert.manufacturer_data(self.manufacturer_id, self.beacon_data)
 
         self.manager = advertisement.AdvertisingManager(self.adapter_address)
         self.manager.register_advertisement(self.advert, {})
@@ -60,8 +106,9 @@ class PiBeaconAdvertiser:
         self.thread.start()
 
         print(f"Advertising Pi beacon on {self.adapter_address}")
-        print(f"Name: {PI_LOCAL_NAME}")
-        print(f"Manufacturer data: 0x{PI_BEACON_DATA.hex()}")
+        print(f"Name: {self.local_name}")
+        print(f"Manufacturer ID: 0x{self.manufacturer_id:04X}")
+        print(f"Manufacturer data: {format_hex(self.beacon_data)}")
 
     def _run(self, advert):
         try:
@@ -96,8 +143,17 @@ class PiBeaconAdvertiser:
 
 
 class PhoneBeaconWatcher:
-    def __init__(self, rssi_trigger_dbm, required_strong_hits, camera_cooldown_seconds):
+    def __init__(
+        self,
+        manufacturer_id,
+        phone_beacon_data,
+        rssi_trigger_dbm,
+        required_strong_hits,
+        camera_cooldown_seconds,
+    ):
         self.queue = asyncio.Queue()
+        self.manufacturer_id = manufacturer_id
+        self.phone_beacon_data = phone_beacon_data
         self.rssi_trigger_dbm = rssi_trigger_dbm
         self.required_strong_hits = required_strong_hits
         self.camera_cooldown_seconds = camera_cooldown_seconds
@@ -106,8 +162,8 @@ class PhoneBeaconWatcher:
         self.last_log_at = 0
 
     def handle_detection(self, device, advertisement_data):
-        payload = advertisement_data.manufacturer_data.get(MANUFACTURER_ID)
-        if payload != PHONE_BEACON_DATA:
+        payload = advertisement_data.manufacturer_data.get(self.manufacturer_id)
+        if payload != self.phone_beacon_data:
             return
 
         rssi = advertisement_data.rssi
@@ -149,7 +205,7 @@ async def wait_for_phone_beacon(watcher):
 
     print(
         "Scanning for phone beacon "
-        f"0x{PHONE_BEACON_DATA.hex()} at RSSI >= {watcher.rssi_trigger_dbm} dBm..."
+        f"{format_hex(watcher.phone_beacon_data)} at RSSI >= {watcher.rssi_trigger_dbm} dBm..."
     )
 
     await scanner.start()
@@ -162,6 +218,34 @@ async def wait_for_phone_beacon(watcher):
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Advertise the Pi beacon, scan phone beacons, and trigger camera capture."
+    )
+    parser.add_argument(
+        "--beacon-only",
+        action="store_true",
+        help="advertise the Pi/checkpoint beacon only; do not scan phone beacons or start camera",
+    )
+    parser.add_argument(
+        "--pi-name",
+        default=PI_LOCAL_NAME,
+        help=f"BLE local name for this Raspberry Pi, default: {PI_LOCAL_NAME}",
+    )
+    parser.add_argument(
+        "--manufacturer-id",
+        type=parse_manufacturer_id,
+        default=MANUFACTURER_ID,
+        help=f"BLE manufacturer id, default: 0x{MANUFACTURER_ID:04X}",
+    )
+    parser.add_argument(
+        "--pi-data",
+        type=parse_hex_bytes,
+        default=PI_BEACON_DATA,
+        help=f"manufacturer data advertised by this Raspberry Pi, default: {format_hex(PI_BEACON_DATA)}",
+    )
+    parser.add_argument(
+        "--phone-data",
+        type=parse_hex_bytes,
+        default=None,
+        help="phone beacon manufacturer data to trigger the camera; default: same as --pi-data",
     )
     parser.add_argument(
         "--preview",
@@ -192,18 +276,40 @@ def parse_args():
         default=CAMERA_SESSION_TIMEOUT_SECONDS,
         help=f"camera session timeout in seconds, default: {CAMERA_SESSION_TIMEOUT_SECONDS}",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.phone_data is None:
+        args.phone_data = args.pi_data
+    return args
 
 
 async def main(args):
-    advertiser = PiBeaconAdvertiser()
+    run_camera_session = None
+    if not args.beacon_only:
+        run_camera_session = load_camera_session_runner()
+
+    advertiser = PiBeaconAdvertiser(
+        local_name=args.pi_name,
+        manufacturer_id=args.manufacturer_id,
+        beacon_data=args.pi_data,
+    )
     watcher = PhoneBeaconWatcher(
+        manufacturer_id=args.manufacturer_id,
+        phone_beacon_data=args.phone_data,
         rssi_trigger_dbm=args.rssi,
         required_strong_hits=args.strong_hits,
         camera_cooldown_seconds=args.cooldown,
     )
 
     advertiser.start()
+    if args.beacon_only:
+        print("Beacon-only mode: camera and phone-beacon scanner are disabled")
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        finally:
+            advertiser.stop()
+        return
+
     if args.preview:
         print("Camera preview: enabled")
     else:

@@ -1,0 +1,3 @@
+# Minimal dependencies for Raspberry Pi units that only advertise a checkpoint beacon.
+bleak
+bluezero
