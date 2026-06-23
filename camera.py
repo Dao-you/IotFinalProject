@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import cv2
+import math
 import time
 import os
 import mediapipe as mp
@@ -8,6 +9,21 @@ from gpiozero import OutputDevice
 
 PHOTO_DIR = "photos"
 os.makedirs(PHOTO_DIR, exist_ok=True)
+
+
+class Buzzer:
+    def __init__(self, pin, beep_seconds=0.12):
+        self.device = OutputDevice(pin)
+        self.beep_seconds = beep_seconds
+
+    def beep(self):
+        self.device.on()
+        time.sleep(self.beep_seconds)
+        self.device.off()
+
+    def cleanup(self):
+        self.device.off()
+        self.device.close()
 
 
 class StepperMotor:
@@ -116,7 +132,7 @@ class FaceTracker:
 
 
 class YaGestureDetector:
-    def __init__(self, cooldown=5, countdown_seconds=3):
+    def __init__(self, cooldown=5, countdown_seconds=3, buzzer=None):
         self.mp_hands = mp.solutions.hands
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -129,8 +145,10 @@ class YaGestureDetector:
 
         self.cooldown = cooldown
         self.countdown_seconds = countdown_seconds
+        self.buzzer = buzzer
         self.last_capture_time = 0
         self.ya_start_time = None
+        self.last_countdown_beep = None
 
     def finger_is_up(self, lm, tip, pip):
         return lm[tip].y < lm[pip].y
@@ -169,14 +187,17 @@ class YaGestureDetector:
 
         if not can_capture:
             self.ya_start_time = None
+            self.last_countdown_beep = None
             return False, "Centering"
 
         if now - self.last_capture_time < self.cooldown:
             self.ya_start_time = None
+            self.last_countdown_beep = None
             return False, "Cooldown"
 
         if not is_ya:
             self.ya_start_time = None
+            self.last_countdown_beep = None
             return False, "Not YA"
 
         if self.ya_start_time is None:
@@ -186,7 +207,12 @@ class YaGestureDetector:
         remaining = self.countdown_seconds - elapsed
 
         if remaining > 0:
-            return False, f"YA detected. Photo in {int(remaining) + 1}"
+            countdown_number = math.ceil(remaining)
+            if countdown_number != self.last_countdown_beep:
+                if self.buzzer is not None:
+                    self.buzzer.beep()
+                self.last_countdown_beep = countdown_number
+            return False, f"YA detected. Photo in {countdown_number}"
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = os.path.join(PHOTO_DIR, f"ya_{timestamp}.jpg")
@@ -195,6 +221,7 @@ class YaGestureDetector:
 
         self.last_capture_time = now
         self.ya_start_time = None
+        self.last_countdown_beep = None
 
         print(f"Photo saved: {filename}")
 
@@ -210,11 +237,13 @@ def run_camera_session(
     show_preview=True
 ):
     MOTOR_PINS = [17, 27, 22, 23]
+    BUZZER_PIN = 12
 
     FRAME_WIDTH = 320
     FRAME_HEIGHT = 240
 
     motor = StepperMotor(MOTOR_PINS, delay=0.002)
+    buzzer = Buzzer(BUZZER_PIN)
     face_detector = FaceDetector("haarcascade_frontalface_default.xml")
     face_tracker = FaceTracker(
         motor=motor,
@@ -225,7 +254,8 @@ def run_camera_session(
 
     ya_detector = YaGestureDetector(
         cooldown=5,
-        countdown_seconds=3
+        countdown_seconds=3,
+        buzzer=buzzer
     )
 
     cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
@@ -234,7 +264,10 @@ def run_camera_session(
 
     if not cap.isOpened():
         motor.cleanup()
+        buzzer.cleanup()
         raise RuntimeError("Cannot open USB camera")
+
+    buzzer.beep()
 
     session_started_at = time.time()
     captured_any_photo = False
@@ -325,6 +358,7 @@ def run_camera_session(
 
     finally:
         motor.cleanup()
+        buzzer.cleanup()
         ya_detector.close()
         cap.release()
         cv2.destroyAllWindows()
