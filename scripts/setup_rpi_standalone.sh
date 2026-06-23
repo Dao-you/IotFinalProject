@@ -131,6 +131,16 @@ if [[ ! "$SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
     exit 1
 fi
 
+if [[ ! -d "$PROJECT_DIR" ]]; then
+    echo "Project directory does not exist: $PROJECT_DIR" >&2
+    exit 1
+fi
+
+if [[ ! -f "$PROJECT_DIR/rpi_beacon_camera.py" ]]; then
+    echo "Cannot find rpi_beacon_camera.py in project directory: $PROJECT_DIR" >&2
+    exit 1
+fi
+
 cd "$PROJECT_DIR"
 
 echo "Installing Raspberry Pi BLE system packages..."
@@ -138,11 +148,28 @@ run_root apt-get update
 run_root apt-get install -y \
     bluetooth \
     bluez \
+    rfkill \
     python3-dbus \
     python3-gi \
+    python3-cairo \
+    python3-gi-cairo \
     python3-pip \
-    python3-venv \
-    rfkill
+    python3-venv
+
+echo "Installing optional build packages..."
+run_root apt-get install -y \
+    build-essential \
+    pkg-config \
+    python3-dev \
+    libcairo2-dev \
+    libglib2.0-dev \
+    libffi-dev || true
+
+if apt-cache show libgirepository-2.0-dev > /dev/null 2>&1; then
+    run_root apt-get install -y libgirepository-2.0-dev || true
+elif apt-cache show libgirepository1.0-dev > /dev/null 2>&1; then
+    run_root apt-get install -y libgirepository1.0-dev || true
+fi
 
 if command -v rfkill > /dev/null 2>&1; then
     run_root rfkill unblock bluetooth || true
@@ -153,9 +180,27 @@ if command -v systemctl > /dev/null 2>&1; then
 fi
 
 echo "Creating standalone Python environment at $VENV_DIR..."
-python3 -m venv "$VENV_DIR"
+
+if [[ -d "$VENV_DIR" ]]; then
+    echo "Removing existing standalone venv at $VENV_DIR..."
+    rm -rf "$VENV_DIR"
+fi
+
+python3 -m venv --system-site-packages "$VENV_DIR"
+
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install -r "$PROJECT_DIR/requirements-rpi-standalone.txt"
+"$VENV_DIR/bin/python" -m pip install bleak dbus-fast
+"$VENV_DIR/bin/python" -m pip install --no-deps bluezero
+
+echo "Checking Python BLE imports..."
+"$VENV_DIR/bin/python" - <<'PY'
+import gi
+import dbus
+import bleak
+from bluezero import peripheral
+
+print("Python BLE imports OK")
+PY
 
 RUN_COMMAND="$VENV_DIR/bin/python $PROJECT_DIR/rpi_beacon_camera.py --beacon-only --pi-name $PI_LOCAL_NAME --manufacturer-id $MANUFACTURER_ID --pi-data $PI_BEACON_DATA"
 
@@ -200,9 +245,11 @@ write_root_file "$ENV_FILE" "$ENV_CONTENT"
 write_root_file "$SERVICE_FILE" "$SERVICE_CONTENT"
 
 run_root systemctl daemon-reload
-run_root systemctl enable --now "$SERVICE_NAME"
+run_root systemctl enable "$SERVICE_NAME"
+run_root systemctl restart "$SERVICE_NAME"
 
 echo "Standalone beacon service is running."
 echo "Beacon data: $PI_BEACON_DATA"
+echo "Local name: $PI_LOCAL_NAME"
 echo "Check status with: systemctl status $SERVICE_NAME"
 echo "View logs with: journalctl -u $SERVICE_NAME -f"
