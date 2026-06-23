@@ -74,6 +74,58 @@ class OledDisplay:
         except Exception as exc:
             print(f"Cannot update OLED display: {exc}")
 
+    def show_fireworks(self):
+        if self.device is None:
+            return
+
+        try:
+            from luma.core.render import canvas
+
+            bursts = [
+                (38, 24),
+                (90, 30)
+            ]
+            rays = [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1)
+            ]
+
+            for radius in (4, 9, 15, 21):
+                with canvas(self.device) as draw:
+                    for center_x, center_y in bursts:
+                        draw.ellipse(
+                            (
+                                center_x - 1,
+                                center_y - 1,
+                                center_x + 1,
+                                center_y + 1
+                            ),
+                            fill="white"
+                        )
+                        for ray_x, ray_y in rays:
+                            end_x = center_x + ray_x * radius
+                            end_y = center_y + ray_y * radius
+                            draw.line(
+                                (center_x, center_y, end_x, end_y),
+                                fill="white"
+                            )
+
+                    draw.point((20 + radius, 50), fill="white")
+                    draw.point((65 - radius, 12), fill="white")
+                    draw.point((106, 50 - radius), fill="white")
+
+                time.sleep(0.12)
+
+            self.show("OK")
+        except Exception as exc:
+            print(f"Cannot show OLED fireworks: {exc}")
+
     def cleanup(self):
         # Leave the final message visible after the camera session exits.
         pass
@@ -282,7 +334,7 @@ class YaGestureDetector:
         print(f"Photo saved: {filename}")
 
         if self.display is not None:
-            self.display.show("OK")
+            self.display.show_fireworks()
 
         return True, "Photo Saved"
 
