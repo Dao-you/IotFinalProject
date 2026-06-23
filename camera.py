@@ -31,6 +31,54 @@ class Buzzer:
         self.device.close()
 
 
+class OledDisplay:
+    def __init__(self, port=1, address=0x3C, width=128, height=64):
+        self.device = None
+        self.width = width
+        self.height = height
+
+        try:
+            from luma.core.interface.serial import i2c
+            from luma.oled.device import ssd1306
+
+            serial = i2c(port=port, address=address)
+            self.device = ssd1306(serial, width=width, height=height)
+            self.device.clear()
+        except Exception as exc:
+            print(f"OLED display disabled: {exc}")
+
+    def show(self, text):
+        if self.device is None:
+            return
+
+        try:
+            from luma.core.render import canvas
+            from PIL import ImageFont
+
+            font_size = 44 if len(text) <= 2 else 36
+            try:
+                font = ImageFont.truetype(
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    font_size
+                )
+            except OSError:
+                font = ImageFont.load_default()
+
+            with canvas(self.device) as draw:
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                x = (self.width - text_width) // 2
+                y = (self.height - text_height) // 2
+                draw.text((x, y), text, fill="white", font=font)
+        except Exception as exc:
+            print(f"Cannot update OLED display: {exc}")
+
+    def cleanup(self):
+        # Leave the final message visible after the camera session exits.
+        pass
+
+
 class StepperMotor:
     HALF_STEP_SEQ = [
         [1, 0, 0, 0],
@@ -137,7 +185,7 @@ class FaceTracker:
 
 
 class YaGestureDetector:
-    def __init__(self, cooldown=5, countdown_seconds=3, buzzer=None):
+    def __init__(self, cooldown=5, countdown_seconds=3, buzzer=None, display=None):
         self.mp_hands = mp.solutions.hands
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -151,6 +199,7 @@ class YaGestureDetector:
         self.cooldown = cooldown
         self.countdown_seconds = countdown_seconds
         self.buzzer = buzzer
+        self.display = display
         self.last_capture_time = 0
         self.ya_start_time = None
         self.last_countdown_beep = None
@@ -216,6 +265,8 @@ class YaGestureDetector:
             if countdown_number != self.last_countdown_beep:
                 if self.buzzer is not None:
                     self.buzzer.beep()
+                if self.display is not None:
+                    self.display.show(str(countdown_number))
                 self.last_countdown_beep = countdown_number
             return False, f"YA detected. Photo in {countdown_number}"
 
@@ -229,6 +280,9 @@ class YaGestureDetector:
         self.last_countdown_beep = None
 
         print(f"Photo saved: {filename}")
+
+        if self.display is not None:
+            self.display.show("OK")
 
         return True, "Photo Saved"
 
@@ -250,6 +304,7 @@ def run_camera_session(
 
     motor = StepperMotor(MOTOR_PINS, delay=0.002)
     buzzer = Buzzer(BUZZER_PIN, active_high=BUZZER_ACTIVE_HIGH)
+    display = OledDisplay()
     face_detector = FaceDetector("haarcascade_frontalface_default.xml")
     face_tracker = FaceTracker(
         motor=motor,
@@ -261,7 +316,8 @@ def run_camera_session(
     ya_detector = YaGestureDetector(
         cooldown=5,
         countdown_seconds=3,
-        buzzer=buzzer
+        buzzer=buzzer,
+        display=display
     )
 
     cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
@@ -271,8 +327,10 @@ def run_camera_session(
     if not cap.isOpened():
         motor.cleanup()
         buzzer.cleanup()
+        display.cleanup()
         raise RuntimeError("Cannot open USB camera")
 
+    display.show("YA")
     buzzer.beep()
 
     session_started_at = time.time()
@@ -365,6 +423,7 @@ def run_camera_session(
     finally:
         motor.cleanup()
         buzzer.cleanup()
+        display.cleanup()
         ya_detector.close()
         cap.release()
         cv2.destroyAllWindows()

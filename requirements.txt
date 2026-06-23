@@ -4,5 +4,6 @@ opencv-python
 mediapipe
 gpiozero
 lgpio
+luma.oled
 bleak
 bluezero
