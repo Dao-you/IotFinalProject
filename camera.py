@@ -5,24 +5,29 @@ import math
 import time
 import os
 import mediapipe as mp
-from gpiozero import OutputDevice
+from gpiozero import OutputDevice, PWMOutputDevice
 
 PHOTO_DIR = "photos"
 os.makedirs(PHOTO_DIR, exist_ok=True)
 
 
 class Buzzer:
-    def __init__(self, pin, beep_seconds=0.12):
-        self.device = OutputDevice(pin)
+    def __init__(self, pin, beep_seconds=0.2, frequency=2000, active_high=True):
+        self.device = PWMOutputDevice(
+            pin,
+            frequency=frequency,
+            active_high=active_high,
+            initial_value=0
+        )
         self.beep_seconds = beep_seconds
 
     def beep(self):
-        self.device.on()
+        self.device.value = 0.5
         time.sleep(self.beep_seconds)
-        self.device.off()
+        self.device.value = 0
 
     def cleanup(self):
-        self.device.off()
+        self.device.value = 0
         self.device.close()
 
 
@@ -238,12 +243,13 @@ def run_camera_session(
 ):
     MOTOR_PINS = [17, 27, 22, 23]
     BUZZER_PIN = 12
+    BUZZER_ACTIVE_HIGH = True
 
     FRAME_WIDTH = 320
     FRAME_HEIGHT = 240
 
     motor = StepperMotor(MOTOR_PINS, delay=0.002)
-    buzzer = Buzzer(BUZZER_PIN)
+    buzzer = Buzzer(BUZZER_PIN, active_high=BUZZER_ACTIVE_HIGH)
     face_detector = FaceDetector("haarcascade_frontalface_default.xml")
     face_tracker = FaceTracker(
         motor=motor,
