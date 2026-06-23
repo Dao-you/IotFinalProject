@@ -1,5 +1,8 @@
 import argparse
 import asyncio
+import os
+import shutil
+import subprocess
 import threading
 import time
 
@@ -25,6 +28,9 @@ REQUIRED_STRONG_HITS = 3
 CAMERA_COOLDOWN_SECONDS = 3
 CAMERA_SESSION_TIMEOUT_SECONDS = 15
 ADVERTISEMENT_REGISTRATION_TIMEOUT_SECONDS = 5
+BTMGMT_ADVERTISEMENT_INSTANCE = 1
+BTMGMT_COMMAND_TIMEOUT_SECONDS = 5
+BLE_AD_FLAGS_GENERAL_DISCOVERABLE = b"\x02\x01\x06"
 
 
 def format_hex(data):
@@ -79,6 +85,9 @@ class PiBeaconAdvertiser:
         self.thread = None
         self.adapter_address = None
         self.advert_id = 1
+        self.btmgmt_instance = BTMGMT_ADVERTISEMENT_INSTANCE
+        self.btmgmt_active = False
+        self.backend = None
         self.local_name = local_name
         self.manufacturer_id = manufacturer_id
         self.beacon_data = beacon_data
@@ -115,15 +124,24 @@ class PiBeaconAdvertiser:
                 "Check bluetoothd experimental support and journal logs.",
                 flush=True,
             )
+            self.backend = "bluez-dbus"
         elif self.manager.registration_error is not None:
             error = self.manager.registration_error
-            self.stop()
-            raise RuntimeError(f"Failed to register BLE advertisement: {error}")
+            self._stop_dbus_advertisement()
+            print(
+                "BlueZ D-Bus advertisement registration failed; "
+                f"falling back to btmgmt: {error}",
+                flush=True,
+            )
+            self._start_btmgmt_advertisement()
+        else:
+            self.backend = "bluez-dbus"
 
         print(f"Advertising Pi beacon on {self.adapter_address}")
         print(f"Name: {self.local_name}")
         print(f"Manufacturer ID: 0x{self.manufacturer_id:04X}")
         print(f"Manufacturer data: {format_hex(self.beacon_data)}")
+        print(f"BLE backend: {self.backend}")
 
     def _run(self, advert):
         try:
@@ -132,6 +150,15 @@ class PiBeaconAdvertiser:
             print(f"Beacon advertiser stopped: {exc}")
 
     def stop(self):
+        if self.advert is None and not self.btmgmt_active:
+            return
+
+        if self.btmgmt_active:
+            self._stop_btmgmt_advertisement()
+
+        self._stop_dbus_advertisement()
+
+    def _stop_dbus_advertisement(self):
         if self.advert is None:
             return
 
@@ -155,6 +182,105 @@ class PiBeaconAdvertiser:
         self.advert = None
         self.manager = None
         self.thread = None
+        if self.backend == "bluez-dbus":
+            self.backend = None
+
+    def _start_btmgmt_advertisement(self):
+        adv_data = self._build_btmgmt_advertising_data()
+        result = self._run_btmgmt(
+            ["add-adv", "-d", adv_data.hex(), str(self.btmgmt_instance)],
+            check=False,
+        )
+        if result is None:
+            print(
+                "btmgmt add-adv timed out after submitting the command; "
+                "continuing with the advertising instance managed by BlueZ",
+                flush=True,
+            )
+        elif result.returncode != 0:
+            stderr = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                "btmgmt failed to create an advertising instance"
+                + (f": {stderr}" if stderr else "")
+            )
+
+        self.btmgmt_active = True
+        self.backend = "btmgmt"
+        print(
+            f"Advertisement registered with btmgmt instance {self.btmgmt_instance}",
+            flush=True,
+        )
+
+    def _stop_btmgmt_advertisement(self):
+        self._run_btmgmt(["rm-adv", str(self.btmgmt_instance)], check=False)
+        self.btmgmt_active = False
+        if self.backend == "btmgmt":
+            self.backend = None
+
+    def _build_btmgmt_advertising_data(self):
+        manufacturer_payload = (
+            self.manufacturer_id.to_bytes(2, byteorder="little") + self.beacon_data
+        )
+        manufacturer_ad = (
+            bytes([len(manufacturer_payload) + 1, 0xFF]) + manufacturer_payload
+        )
+        adv_data = BLE_AD_FLAGS_GENERAL_DISCOVERABLE + manufacturer_ad
+
+        if len(adv_data) > 31:
+            raise RuntimeError(
+                "btmgmt legacy advertising data cannot exceed 31 bytes; "
+                f"got {len(adv_data)} bytes"
+            )
+
+        return adv_data
+
+    def _run_btmgmt(self, args, check):
+        command = self._btmgmt_command() + args
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=BTMGMT_COMMAND_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            message = (
+                "btmgmt command timed out: "
+                f"{' '.join(command)}"
+            )
+            if check:
+                raise RuntimeError(message) from exc
+            print(message, flush=True)
+            return None
+
+        if result.stdout.strip():
+            print(result.stdout.strip(), flush=True)
+
+        if result.returncode != 0 and check:
+            stderr = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                "btmgmt command failed: "
+                f"{' '.join(command)}"
+                + (f"\n{stderr}" if stderr else "")
+            )
+
+        return result
+
+    def _btmgmt_command(self):
+        btmgmt_path = shutil.which("btmgmt")
+        if btmgmt_path is None:
+            raise RuntimeError("btmgmt was not found; install the bluez package")
+
+        if hasattr(os, "geteuid") and os.geteuid() != 0:
+            sudo_path = shutil.which("sudo")
+            if sudo_path is None:
+                raise RuntimeError(
+                    "btmgmt fallback requires root privileges or passwordless sudo"
+                )
+            return [sudo_path, "-n", btmgmt_path]
+
+        return [btmgmt_path]
 
 
 class ConfirmingAdvertisingManager(advertisement.AdvertisingManager):

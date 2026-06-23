@@ -254,6 +254,7 @@ WorkingDirectory=$PROJECT_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONUNBUFFERED=1
 ExecStart=$VENV_DIR/bin/python $PROJECT_DIR/rpi_beacon_camera.py --beacon-only --pi-name \${PI_LOCAL_NAME} --manufacturer-id \${MANUFACTURER_ID} --pi-data \${PI_BEACON_DATA}
+ExecStopPost=-/usr/bin/timeout 5s /usr/bin/btmgmt rm-adv 1
 Restart=on-failure
 RestartSec=3
 
