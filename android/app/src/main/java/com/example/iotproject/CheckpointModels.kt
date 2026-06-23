@@ -5,6 +5,7 @@ import java.util.Locale
 
 const val DEFAULT_MANUFACTURER_ID = 0xFFFF
 const val DEFAULT_BEACON_DATA_HEX = "00110044"
+val PHONE_BEACON_DATA = byteArrayOf(0x00, 0x11, 0x00, 0x44)
 
 data class MapPoint(
     val x: Float,
@@ -51,4 +52,3 @@ fun proximityStrength(signal: BeaconSignal?, nowElapsedRealtime: Long): Float {
     val freshness = 1f - (ageMillis / 8_000f).coerceIn(0f, 1f)
     return (rawStrength.coerceIn(0f, 1f) * freshness).coerceIn(0f, 1f)
 }
-

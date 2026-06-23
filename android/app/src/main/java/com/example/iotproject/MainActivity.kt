@@ -17,7 +17,8 @@ import com.example.iotproject.ui.theme.IoTProjectTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var bleScanner: BleCheckpointScanner
-    private var scanWhenResumed = false
+    private lateinit var phoneBeaconAdvertiser: BlePhoneBeaconAdvertiser
+    private var bleWhenResumed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
 
         val beaconSignals = mutableStateMapOf<String, BeaconSignal>()
         var scanStatus by mutableStateOf("正在準備藍牙掃描")
+        var advertiseStatus by mutableStateOf("正在準備手機 beacon")
 
         bleScanner = BleCheckpointScanner(
             context = applicationContext,
@@ -40,30 +42,41 @@ class MainActivity : ComponentActivity() {
                 }
             },
         )
+        phoneBeaconAdvertiser = BlePhoneBeaconAdvertiser(
+            context = applicationContext,
+            onStatus = { status ->
+                runOnUiThread {
+                    advertiseStatus = status
+                }
+            },
+        )
 
         setContent {
             val context = LocalContext.current
             var hasBlePermission by remember {
-                mutableStateOf(BleCheckpointScanner.hasRequiredPermissions(context))
+                mutableStateOf(BleRuntimePermissions.hasRequiredPermissions(context))
             }
 
             val permissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestMultiplePermissions(),
             ) {
-                hasBlePermission = BleCheckpointScanner.hasRequiredPermissions(context)
+                hasBlePermission = BleRuntimePermissions.hasRequiredPermissions(context)
             }
 
             DisposableEffect(hasBlePermission) {
-                scanWhenResumed = hasBlePermission
+                bleWhenResumed = hasBlePermission
                 if (hasBlePermission) {
                     bleScanner.start()
+                    phoneBeaconAdvertiser.start()
                 } else {
                     bleScanner.stop()
+                    phoneBeaconAdvertiser.stop()
                 }
 
                 onDispose {
-                    scanWhenResumed = false
+                    bleWhenResumed = false
                     bleScanner.stop()
+                    phoneBeaconAdvertiser.stop()
                 }
             }
 
@@ -71,9 +84,10 @@ class MainActivity : ComponentActivity() {
                 IotOrienteeringApp(
                     beaconSignals = beaconSignals,
                     scanStatus = scanStatus,
+                    advertiseStatus = advertiseStatus,
                     hasBlePermission = hasBlePermission,
                     onRequestBlePermission = {
-                        permissionLauncher.launch(BleCheckpointScanner.requiredPermissions())
+                        permissionLauncher.launch(BleRuntimePermissions.requiredPermissions())
                     },
                 )
             }
@@ -82,14 +96,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (scanWhenResumed && ::bleScanner.isInitialized) {
+        if (bleWhenResumed && ::bleScanner.isInitialized && ::phoneBeaconAdvertiser.isInitialized) {
             bleScanner.start()
+            phoneBeaconAdvertiser.start()
         }
     }
 
     override fun onPause() {
         if (::bleScanner.isInitialized) {
             bleScanner.stop()
+        }
+        if (::phoneBeaconAdvertiser.isInitialized) {
+            phoneBeaconAdvertiser.stop()
         }
         super.onPause()
     }
@@ -98,7 +116,9 @@ class MainActivity : ComponentActivity() {
         if (::bleScanner.isInitialized) {
             bleScanner.stop()
         }
+        if (::phoneBeaconAdvertiser.isInitialized) {
+            phoneBeaconAdvertiser.stop()
+        }
         super.onDestroy()
     }
 }
-

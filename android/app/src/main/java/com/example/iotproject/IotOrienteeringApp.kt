@@ -112,6 +112,7 @@ private enum class AppScreen(val title: String) {
 fun IotOrienteeringApp(
     beaconSignals: Map<String, BeaconSignal>,
     scanStatus: String,
+    advertiseStatus: String,
     hasBlePermission: Boolean,
     onRequestBlePermission: () -> Unit,
 ) {
@@ -234,7 +235,10 @@ fun IotOrienteeringApp(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            AppHeader(scanStatus = scanStatus)
+            AppHeader(
+                scanStatus = scanStatus,
+                advertiseStatus = advertiseStatus,
+            )
             TabRow(selectedTabIndex = currentScreen.ordinal) {
                 AppScreen.entries.forEach { screen ->
                     Tab(
@@ -280,7 +284,10 @@ fun IotOrienteeringApp(
 }
 
 @Composable
-private fun AppHeader(scanStatus: String) {
+private fun AppHeader(
+    scanStatus: String,
+    advertiseStatus: String,
+) {
     Surface(
         color = PanelBackground,
         shadowElevation = 1.dp,
@@ -297,7 +304,14 @@ private fun AppHeader(scanStatus: String) {
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = scanStatus,
+                text = "掃描：$scanStatus",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF58666D),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "手機 beacon：$advertiseStatus",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color(0xFF58666D),
                 maxLines = 1,
@@ -379,7 +393,7 @@ private fun PermissionBanner(onRequestBlePermission: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "尚未授權 BLE 掃描",
+                text = "尚未授權 BLE 掃描與手機 beacon 發射",
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
             )
@@ -1328,6 +1342,7 @@ private fun IotOrienteeringAppPreview() {
         IotOrienteeringApp(
             beaconSignals = emptyMap(),
             scanStatus = "正在掃描檢核點 beacon",
+            advertiseStatus = "正在發射手機 beacon 00110044",
             hasBlePermission = true,
             onRequestBlePermission = {},
         )
