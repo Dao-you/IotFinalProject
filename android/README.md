@@ -10,8 +10,9 @@
   - 顯示每個檢核點圖釘與檢核點狀態。
   - 掃描 Manufacturer ID `0xFFFF` 的 BLE advertisement。
   - 當掃到與檢核點 `Beacon Data` 相同的 payload 時，依 RSSI 與最近看到時間加強圖釘光暈。
-  - App 在前景且取得藍牙權限時，會固定發射手機 beacon `00110044`，供 Raspberry Pi 判斷玩家手機是否靠近。
   - 接近強度達門檻後可手動簽到檢核點，同一檢核點只記錄第一次簽到。
+  - 簽到後，App 會發射最近簽到檢核點的 `Beacon Data`，供 Raspberry Pi 判斷玩家手機是否靠近互動裝置。
+  - 尚未完成任何簽到前，App 不會發射手機 beacon。
   - 已簽到的檢核點會在地圖圖釘與狀態列使用不同顏色標示。
   - 顯示簽到記錄，並在簽到成功後提示玩家可到互動裝置前拍攝團體照。
 - 管理介面：
@@ -29,13 +30,19 @@
 
 - Manufacturer ID: `0xFFFF`
 - Pi beacon data: `00110044`
-- Phone beacon data: `00110044`
+- Phone beacon data: 使用最近簽到檢核點的 `Beacon Data`
 
-Android App 目前也以 `00110044` 作為預設檢核點 `Beacon Data`，並使用相同 payload 發射手機 beacon。Raspberry Pi 端會掃描手機 beacon，RSSI 達到門檻且連續命中後啟動互動裝置。
+Android App 目前的預設檢核點 `Beacon Data`：
+
+- 入口：`00110044`
+- 中庭：`00110045`
+- 終點：`00110046`
+
+玩家簽到後，Android App 會用該檢核點的 `Beacon Data` 發射手機 beacon。Raspberry Pi 端會掃描手機 beacon，RSSI 達到門檻且連續命中後啟動互動裝置。
 
 如果多個檢核點都使用相同 payload，手機端只能知道附近有符合格式的 beacon，無法分辨是哪一個實體檢核點，因此所有相同 payload 的檢核點都會同時顯示接近效果，也會同時達到可簽到狀態。
 
-正式場域建議讓每台 Raspberry Pi 使用不同 checkpoint ID 或不同 manufacturer data payload，並同步更新管理介面的檢核點 `Beacon Data`。
+正式場域建議讓每台 Raspberry Pi 使用不同 checkpoint ID 或不同 manufacturer data payload，並同步更新管理介面的檢核點 `Beacon Data` 與該 Raspberry Pi 端預期的手機 beacon data。
 
 ## 建置與執行
 

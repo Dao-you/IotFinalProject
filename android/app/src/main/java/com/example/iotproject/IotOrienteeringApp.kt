@@ -115,6 +115,7 @@ fun IotOrienteeringApp(
     advertiseStatus: String,
     hasBlePermission: Boolean,
     onRequestBlePermission: () -> Unit,
+    onPhoneBeaconDataChange: (String?) -> Unit,
 ) {
     var currentScreen by remember { mutableStateOf(AppScreen.Game) }
     var nowElapsedRealtime by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
@@ -130,13 +131,13 @@ fun IotOrienteeringApp(
                 id = "cp_court",
                 name = "中庭",
                 position = MapPoint(0.55f, 0.48f),
-                beaconDataHex = DEFAULT_BEACON_DATA_HEX,
+                beaconDataHex = "00110045",
             ),
             Checkpoint(
                 id = "cp_finish",
                 name = "終點",
                 position = MapPoint(0.78f, 0.72f),
-                beaconDataHex = DEFAULT_BEACON_DATA_HEX,
+                beaconDataHex = "00110046",
             ),
         )
     }
@@ -184,6 +185,9 @@ fun IotOrienteeringApp(
         val index = checkpoints.indexOfFirst { it.id == checkpointId }
         if (index >= 0) {
             checkpoints[index] = checkpoints[index].copy(beaconDataHex = cleanBeaconData)
+            if (checkInRecords.firstOrNull()?.checkpointId == checkpointId) {
+                onPhoneBeaconDataChange(cleanBeaconData)
+            }
         }
     }
 
@@ -227,6 +231,7 @@ fun IotOrienteeringApp(
             ),
         )
         latestCheckInMessage = "${checkpoint.name} 簽到成功。可以到互動裝置前拍攝團體照。"
+        onPhoneBeaconDataChange(checkpoint.beaconDataHex)
     }
 
     Scaffold(containerColor = AppBackground) { innerPadding ->
@@ -1342,9 +1347,10 @@ private fun IotOrienteeringAppPreview() {
         IotOrienteeringApp(
             beaconSignals = emptyMap(),
             scanStatus = "正在掃描檢核點 beacon",
-            advertiseStatus = "正在發射手機 beacon 00110044",
+            advertiseStatus = "尚未簽到，不發射手機 beacon",
             hasBlePermission = true,
             onRequestBlePermission = {},
+            onPhoneBeaconDataChange = {},
         )
     }
 }

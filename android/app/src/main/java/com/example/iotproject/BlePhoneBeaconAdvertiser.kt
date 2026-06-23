@@ -19,10 +19,69 @@ class BlePhoneBeaconAdvertiser(
         context.getSystemService(BluetoothManager::class.java)
 
     private var advertiseCallback: AdvertiseCallback? = null
+    private var shouldAdvertise = false
+    private var currentDataHex: String? = null
+    private var currentPayload: ByteArray? = null
+    private var advertisingDataHex: String? = null
 
     @SuppressLint("MissingPermission")
     fun start() {
-        if (advertiseCallback != null) {
+        shouldAdvertise = true
+        restartAdvertisingIfNeeded()
+    }
+
+    fun setBeaconDataHex(beaconDataHex: String?) {
+        val cleanDataHex = beaconDataHex?.let(::normalizeBeaconHex).orEmpty()
+        val payload = cleanDataHex.toBeaconPayload()
+
+        if (cleanDataHex.isBlank()) {
+            currentDataHex = null
+            currentPayload = null
+            stopCurrentAdvertising(notifyStopped = false)
+            onStatus("尚未簽到，不發射手機 beacon")
+            return
+        }
+
+        if (payload == null) {
+            currentDataHex = null
+            currentPayload = null
+            stopCurrentAdvertising(notifyStopped = false)
+            onStatus("手機 beacon data 格式錯誤")
+            return
+        }
+
+        if (currentDataHex == cleanDataHex) {
+            if (shouldAdvertise) {
+                restartAdvertisingIfNeeded()
+            }
+            return
+        }
+
+        currentDataHex = cleanDataHex
+        currentPayload = payload
+
+        if (shouldAdvertise) {
+            restartAdvertisingIfNeeded()
+        } else {
+            onStatus("手機 beacon 已準備 $cleanDataHex")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun restartAdvertisingIfNeeded() {
+        val dataHex = currentDataHex
+        val payload = currentPayload
+        if (!shouldAdvertise) {
+            return
+        }
+
+        if (dataHex == null || payload == null) {
+            stopCurrentAdvertising(notifyStopped = false)
+            onStatus("尚未簽到，不發射手機 beacon")
+            return
+        }
+
+        if (advertiseCallback != null && advertisingDataHex == dataHex) {
             return
         }
 
@@ -53,52 +112,69 @@ class BlePhoneBeaconAdvertiser(
             return
         }
 
+        stopCurrentAdvertising(notifyStopped = false)
+
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .setConnectable(false)
             .build()
         val data = AdvertiseData.Builder()
-            .addManufacturerData(DEFAULT_MANUFACTURER_ID, PHONE_BEACON_DATA.copyOf())
+            .addManufacturerData(DEFAULT_MANUFACTURER_ID, payload.copyOf())
             .setIncludeDeviceName(false)
             .build()
 
         val callback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                onStatus("正在發射手機 beacon $DEFAULT_BEACON_DATA_HEX")
+                onStatus("正在發射手機 beacon $dataHex")
             }
 
             override fun onStartFailure(errorCode: Int) {
                 advertiseCallback = null
+                advertisingDataHex = null
                 onStatus("手機 beacon 發射失敗：${advertiseErrorMessage(errorCode)}")
             }
         }
 
         try {
             advertiseCallback = callback
+            advertisingDataHex = dataHex
             advertiser.startAdvertising(settings, data, callback)
-            onStatus("正在啟動手機 beacon $DEFAULT_BEACON_DATA_HEX")
+            onStatus("正在啟動手機 beacon $dataHex")
         } catch (error: SecurityException) {
             advertiseCallback = null
+            advertisingDataHex = null
             onStatus("缺少手機 beacon 發射權限")
         } catch (error: IllegalStateException) {
             advertiseCallback = null
+            advertisingDataHex = null
             onStatus("手機 beacon 發射器尚未準備好")
         }
     }
 
     @SuppressLint("MissingPermission")
     fun stop() {
+        shouldAdvertise = false
+        stopCurrentAdvertising(notifyStopped = true)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopCurrentAdvertising(notifyStopped: Boolean) {
         val callback = advertiseCallback ?: return
         advertiseCallback = null
+        advertisingDataHex = null
 
         try {
             bluetoothManager?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
-            onStatus("手機 beacon 已停止")
+            if (notifyStopped) {
+                onStatus("手機 beacon 已停止")
+            }
         } catch (_: SecurityException) {
             onStatus("缺少手機 beacon 發射權限")
         } catch (_: IllegalStateException) {
-            onStatus("手機 beacon 已停止")
+            if (notifyStopped) {
+                onStatus("手機 beacon 已停止")
+            }
         }
     }
 
@@ -109,6 +185,18 @@ class BlePhoneBeaconAdvertiser(
         AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR -> "系統內部錯誤"
         AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "發射器數量已滿"
         else -> errorCode.toString()
+    }
+
+    private fun String.toBeaconPayload(): ByteArray? {
+        if (isBlank() || length % 2 != 0) {
+            return null
+        }
+
+        return runCatching {
+            ByteArray(length / 2) { index ->
+                substring(index * 2, index * 2 + 2).toInt(16).toByte()
+            }
+        }.getOrNull()
     }
 
     companion object {

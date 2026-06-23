@@ -89,6 +89,9 @@ class MainActivity : ComponentActivity() {
                     onRequestBlePermission = {
                         permissionLauncher.launch(BleRuntimePermissions.requiredPermissions())
                     },
+                    onPhoneBeaconDataChange = { beaconDataHex ->
+                        phoneBeaconAdvertiser.setBeaconDataHex(beaconDataHex)
+                    },
                 )
             }
         }

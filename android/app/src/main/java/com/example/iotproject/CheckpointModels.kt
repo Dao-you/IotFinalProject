@@ -5,7 +5,6 @@ import java.util.Locale
 
 const val DEFAULT_MANUFACTURER_ID = 0xFFFF
 const val DEFAULT_BEACON_DATA_HEX = "00110044"
-val PHONE_BEACON_DATA = byteArrayOf(0x00, 0x11, 0x00, 0x44)
 
 data class MapPoint(
     val x: Float,
