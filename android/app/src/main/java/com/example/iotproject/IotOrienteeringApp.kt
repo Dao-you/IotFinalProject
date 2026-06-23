@@ -30,7 +30,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -162,10 +165,10 @@ fun IotOrienteeringApp(
     }
 
     fun addCheckpoint(name: String, beaconDataHex: String) {
-        val cleanBeaconData = normalizeBeaconHex(beaconDataHex).ifBlank {
-            DEFAULT_BEACON_DATA_HEX
-        }
         val checkpointNumber = checkpoints.size + 1
+        val cleanBeaconData = normalizeBeaconHex(beaconDataHex).ifBlank {
+            suggestedBeaconDataHex(checkpointNumber)
+        }
         val checkpoint = Checkpoint(
             id = "cp_${SystemClock.elapsedRealtime()}",
             name = name.trim().ifBlank { "檢核點 $checkpointNumber" },
@@ -176,18 +179,59 @@ fun IotOrienteeringApp(
         selectedCheckpointId = checkpoint.id
     }
 
-    fun updateCheckpointBeaconData(checkpointId: String, beaconDataHex: String) {
+    fun updateCheckpoint(checkpointId: String, name: String, beaconDataHex: String) {
+        val cleanName = name.trim()
         val cleanBeaconData = normalizeBeaconHex(beaconDataHex)
-        if (cleanBeaconData.isBlank()) {
+        if (cleanName.isBlank() || cleanBeaconData.isBlank()) {
             return
         }
 
         val index = checkpoints.indexOfFirst { it.id == checkpointId }
         if (index >= 0) {
-            checkpoints[index] = checkpoints[index].copy(beaconDataHex = cleanBeaconData)
+            checkpoints[index] = checkpoints[index].copy(
+                name = cleanName,
+                beaconDataHex = cleanBeaconData,
+            )
+            checkInRecords.indices.forEach { recordIndex ->
+                val record = checkInRecords[recordIndex]
+                if (record.checkpointId == checkpointId) {
+                    checkInRecords[recordIndex] = record.copy(
+                        checkpointName = cleanName,
+                        beaconDataHex = cleanBeaconData,
+                    )
+                }
+            }
             if (checkInRecords.firstOrNull()?.checkpointId == checkpointId) {
                 onPhoneBeaconDataChange(cleanBeaconData)
             }
+        }
+    }
+
+    fun deleteCheckpoint(checkpointId: String) {
+        val checkpointIndex = checkpoints.indexOfFirst { it.id == checkpointId }
+        if (checkpointIndex < 0) {
+            return
+        }
+
+        checkpoints.removeAt(checkpointIndex)
+
+        var removedCheckInRecord = false
+        for (recordIndex in checkInRecords.lastIndex downTo 0) {
+            if (checkInRecords[recordIndex].checkpointId == checkpointId) {
+                checkInRecords.removeAt(recordIndex)
+                removedCheckInRecord = true
+            }
+        }
+
+        if (selectedCheckpointId == checkpointId) {
+            selectedCheckpointId = checkpoints
+                .getOrNull(checkpointIndex.coerceAtMost(checkpoints.lastIndex))
+                ?.id
+        }
+
+        if (removedCheckInRecord) {
+            latestCheckInMessage = null
+            onPhoneBeaconDataChange(checkInRecords.firstOrNull()?.beaconDataHex)
         }
     }
 
@@ -284,7 +328,8 @@ fun IotOrienteeringApp(
                     onSelectCheckpoint = { selectedCheckpointId = it },
                     onMoveCheckpoint = ::moveCheckpoint,
                     onAddCheckpoint = ::addCheckpoint,
-                    onUpdateCheckpointBeaconData = ::updateCheckpointBeaconData,
+                    onUpdateCheckpoint = ::updateCheckpoint,
+                    onDeleteCheckpoint = ::deleteCheckpoint,
                     onMapBackgroundSelected = ::setMapBackgroundImage,
                     onMoveMapBackground = ::moveMapBackgroundImage,
                     onSetMapBackgroundScale = ::setMapBackgroundScale,
@@ -430,19 +475,26 @@ private fun AdminScreen(
     onSelectCheckpoint: (String) -> Unit,
     onMoveCheckpoint: (String, MapPoint) -> Unit,
     onAddCheckpoint: (String, String) -> Unit,
-    onUpdateCheckpointBeaconData: (String, String) -> Unit,
+    onUpdateCheckpoint: (String, String, String) -> Unit,
+    onDeleteCheckpoint: (String) -> Unit,
     onMapBackgroundSelected: (Uri) -> Unit,
     onMoveMapBackground: (Float, Float) -> Unit,
     onSetMapBackgroundScale: (Float) -> Unit,
     onResetMapBackgroundPlacement: () -> Unit,
 ) {
     var newCheckpointName by remember { mutableStateOf("") }
-    var newBeaconDataHex by remember { mutableStateOf(DEFAULT_BEACON_DATA_HEX) }
+    var newBeaconDataHex by remember { mutableStateOf(suggestedBeaconDataHex(checkpoints.size + 1)) }
     val selectedCheckpoint = checkpoints.firstOrNull { it.id == selectedCheckpointId }
+    var editedCheckpointName by remember { mutableStateOf("") }
     var editedBeaconDataHex by remember { mutableStateOf("") }
     var adjustingMapBackground by remember { mutableStateOf(false) }
 
-    LaunchedEffect(selectedCheckpoint?.id, selectedCheckpoint?.beaconDataHex) {
+    LaunchedEffect(
+        selectedCheckpoint?.id,
+        selectedCheckpoint?.name,
+        selectedCheckpoint?.beaconDataHex,
+    ) {
+        editedCheckpointName = selectedCheckpoint?.name.orEmpty()
         editedBeaconDataHex = selectedCheckpoint?.beaconDataHex.orEmpty()
     }
 
@@ -471,36 +523,24 @@ private fun AdminScreen(
                 .fillMaxWidth()
         )
 
-        MapBackgroundPanel(
-            mapBackgroundImage = mapBackgroundImage,
-            adjustingMapBackground = adjustingMapBackground,
-            onMapBackgroundSelected = onMapBackgroundSelected,
-            onAdjustingMapBackgroundChange = { adjustingMapBackground = it },
-            onSetMapBackgroundScale = onSetMapBackgroundScale,
-            onResetMapBackgroundPlacement = onResetMapBackgroundPlacement,
-        )
-
-        AddCheckpointPanel(
-            newCheckpointName = newCheckpointName,
-            newBeaconDataHex = newBeaconDataHex,
-            onNameChange = { newCheckpointName = it },
-            onBeaconDataChange = { newBeaconDataHex = normalizeBeaconHex(it) },
-            onAddCheckpoint = {
-                onAddCheckpoint(newCheckpointName, newBeaconDataHex)
-                newCheckpointName = ""
-            },
-        )
-
         SelectedCheckpointEditor(
             checkpoint = selectedCheckpoint,
+            editedCheckpointName = editedCheckpointName,
             editedBeaconDataHex = editedBeaconDataHex,
+            onNameChange = { editedCheckpointName = it },
             onBeaconDataChange = { editedBeaconDataHex = normalizeBeaconHex(it) },
-            onApplyBeaconData = {
+            onApplyCheckpoint = {
                 if (selectedCheckpoint != null) {
-                    onUpdateCheckpointBeaconData(
+                    onUpdateCheckpoint(
                         selectedCheckpoint.id,
+                        editedCheckpointName,
                         editedBeaconDataHex,
                     )
+                }
+            },
+            onDeleteCheckpoint = {
+                if (selectedCheckpoint != null) {
+                    onDeleteCheckpoint(selectedCheckpoint.id)
                 }
             },
         )
@@ -509,6 +549,28 @@ private fun AdminScreen(
             checkpoints = checkpoints,
             selectedCheckpointId = selectedCheckpointId,
             onSelectCheckpoint = onSelectCheckpoint,
+        )
+
+        AddCheckpointPanel(
+            newCheckpointName = newCheckpointName,
+            newBeaconDataHex = newBeaconDataHex,
+            onNameChange = { newCheckpointName = it },
+            onBeaconDataChange = { newBeaconDataHex = normalizeBeaconHex(it) },
+            onAddCheckpoint = {
+                val nextCheckpointNumber = checkpoints.size + 2
+                onAddCheckpoint(newCheckpointName, newBeaconDataHex)
+                newCheckpointName = ""
+                newBeaconDataHex = suggestedBeaconDataHex(nextCheckpointNumber)
+            },
+        )
+
+        MapBackgroundPanel(
+            mapBackgroundImage = mapBackgroundImage,
+            adjustingMapBackground = adjustingMapBackground,
+            onMapBackgroundSelected = onMapBackgroundSelected,
+            onAdjustingMapBackgroundChange = { adjustingMapBackground = it },
+            onSetMapBackgroundScale = onSetMapBackgroundScale,
+            onResetMapBackgroundPlacement = onResetMapBackgroundPlacement,
         )
     }
 }
@@ -666,26 +728,54 @@ private fun AddCheckpointPanel(
 @Composable
 private fun SelectedCheckpointEditor(
     checkpoint: Checkpoint?,
+    editedCheckpointName: String,
     editedBeaconDataHex: String,
+    onNameChange: (String) -> Unit,
     onBeaconDataChange: (String) -> Unit,
-    onApplyBeaconData: () -> Unit,
+    onApplyCheckpoint: () -> Unit,
+    onDeleteCheckpoint: () -> Unit,
 ) {
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+    val canSave = checkpoint != null &&
+        editedCheckpointName.trim().isNotBlank() &&
+        editedBeaconDataHex.isNotBlank() &&
+        (
+            editedCheckpointName.trim() != checkpoint.name ||
+                editedBeaconDataHex != checkpoint.beaconDataHex
+            )
+
     Surface(
-        color = Color(0xFFF6F8F8),
+        color = PanelBackground,
         shape = RoundedCornerShape(8.dp),
+        shadowElevation = 1.dp,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = checkpoint?.let { "編輯 ${it.name}" } ?: "選取檢核點後可編輯 Beacon Data",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
+                text = "檢核點編輯",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+            if (checkpoint == null) {
+                Text(
+                    text = "尚未選取檢核點",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF667176),
+                )
+            }
+            OutlinedTextField(
+                value = editedCheckpointName,
+                onValueChange = onNameChange,
+                label = { Text("檢核點名稱") },
+                singleLine = true,
+                enabled = checkpoint != null,
+                modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = editedBeaconDataHex,
@@ -695,16 +785,63 @@ private fun SelectedCheckpointEditor(
                 enabled = checkpoint != null,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(
-                onClick = onApplyBeaconData,
-                enabled = checkpoint != null &&
-                    editedBeaconDataHex.isNotBlank() &&
-                    editedBeaconDataHex != checkpoint.beaconDataHex,
-                modifier = Modifier.align(Alignment.End),
+            checkpoint?.let { selectedCheckpoint ->
+                Text(
+                    text = "位置 ${(selectedCheckpoint.position.x * 100).roundToInt()}%, " +
+                        "${(selectedCheckpoint.position.y * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF667176),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("套用")
+                OutlinedButton(
+                    onClick = { showDeleteConfirmation = true },
+                    enabled = checkpoint != null,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFFB3261E),
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("刪除")
+                }
+                Button(
+                    onClick = onApplyCheckpoint,
+                    enabled = canSave,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("儲存")
+                }
             }
         }
+    }
+
+    if (showDeleteConfirmation && checkpoint != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("刪除檢核點") },
+            text = {
+                Text("刪除 ${checkpoint.name} 後，相關簽到記錄也會一併移除。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        onDeleteCheckpoint()
+                    },
+                ) {
+                    Text("刪除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 
@@ -733,12 +870,20 @@ private fun CheckpointAdminList(
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                checkpoints.forEach { checkpoint ->
-                    CheckpointAdminRow(
-                        checkpoint = checkpoint,
-                        isSelected = checkpoint.id == selectedCheckpointId,
-                        onClick = { onSelectCheckpoint(checkpoint.id) },
+                if (checkpoints.isEmpty()) {
+                    Text(
+                        text = "尚未建立檢核點",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF667176),
                     )
+                } else {
+                    checkpoints.forEach { checkpoint ->
+                        CheckpointAdminRow(
+                            checkpoint = checkpoint,
+                            isSelected = checkpoint.id == selectedCheckpointId,
+                            onClick = { onSelectCheckpoint(checkpoint.id) },
+                        )
+                    }
                 }
             }
         }
@@ -1360,6 +1505,11 @@ private fun loadImageBitmap(context: android.content.Context, uri: Uri): ImageBi
 
 private fun formatCheckInTime(timeMillis: Long): String {
     return SimpleDateFormat("HH:mm:ss", Locale.TAIWAN).format(Date(timeMillis))
+}
+
+private fun suggestedBeaconDataHex(checkpointNumber: Int): String {
+    val baseData = DEFAULT_BEACON_DATA_HEX.toLong(16)
+    return "%08X".format(Locale.US, baseData + checkpointNumber - 1)
 }
 
 @Preview(showBackground = true)
